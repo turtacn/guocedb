@@ -1,7 +1,6 @@
-## 总体架构设计 (`docs/architecture.md`)
-
-```markdown
 # GuoceDB 架构设计文档
+
+总体架构设计
 
 ## 1. 引言
 
@@ -21,7 +20,10 @@ GuoceDB 是一个旨在从零到一构建的、与 MySQL 协议兼容的通用�
 GuoceDB 的架构设计遵循分层思想，主要包括接口层、计算层、存储层、维护层和安全层。
 
 下图展示了 GuoceDB 的核心组件及其交互关系：
+
 <img src="./imgs/arch.png" width="60%">
+
+![imgs](imgs/arch.png)
 
 上图简要描述了 GuoceDB 的分层架构。客户端（例如应用服务器或 `guocedb-cli`）通过接口层与数据库交互。SQL 请求主要通过 MySQL 协议接口，而管理操作则通过 gRPC 或 REST API。请求进入计算层后，会经过一系列处理，最终通过存储抽象层与具体的存储引擎交互。维护层和安全层作为横切关注点，贯穿于其他各层，提供监控、日志、安全保障等功能。
 
