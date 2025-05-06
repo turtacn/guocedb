@@ -21,9 +21,8 @@ GuoceDB 的架构设计遵循分层思想，主要包括接口层、计算层、
 
 下图展示了 GuoceDB 的核心组件及其交互关系：
 
-<img src="./imgs/arch.png" width="60%">
+<img src="./imgs/arch.png" width="100%">
 
-![imgs](imgs/arch.png)
 
 上图简要描述了 GuoceDB 的分层架构。客户端（例如应用服务器或 `guocedb-cli`）通过接口层与数据库交互。SQL 请求主要通过 MySQL 协议接口，而管理操作则通过 gRPC 或 REST API。请求进入计算层后，会经过一系列处理，最终通过存储抽象层与具体的存储引擎交互。维护层和安全层作为横切关注点，贯穿于其他各层，提供监控、日志、安全保障等功能。
 
@@ -113,7 +112,8 @@ GuoceDB 的架构设计遵循分层思想，主要包括接口层、计算层、
 ## 4. 部署架构
 
 GuoceDB 初期设计为单机集中式数据库。其典型部署如下图所示：
-<img src="./imgs/deploy.png" width="60%">
+
+<img src="./imgs/deploy.png" width="100%">
 
 -   **GuoceDB 服务器节点**: 运行 `guocedb-server` 进程。该进程包含了完整的接口层、计算层、存储层、维护层和安全层逻辑。
 -   **BadgerDB 数据文件**: `guocedb-server` 通过存储层将数据持久化到本地磁盘上的 BadgerDB 数据文件中。
@@ -128,7 +128,7 @@ GuoceDB 初期设计为单机集中式数据库。其典型部署如下图所示
 
 以一个简单的 `SELECT` 查询为例，说明数据和控制流：
 
-<img src="./imgs/example-select.png" width="60%">
+<img src="./imgs/example-select.png" width="100%">
 
 上述时序图展示了一个典型SQL查询在GuoceDB内部的流转过程：
 1.  **连接与认证**: 客户端与接口层建立连接并完成身份验证。
@@ -161,5 +161,5 @@ GuoceDB 初期设计为单机集中式数据库。其典型部署如下图所示
 
 ## 8. 参考
 
-[1] go-mysql-server: [https://github.com/dolthub/go-mysql-server](https://github.com/dolthub/go-mysql-server)
-[2] badger: [https://github.com/hypermodeinc/badger](https://github.com/hypermodeinc/badger) (或其主流fork如 [https://github.com/dgraph-io/badger](https://github.com/dgraph-io/badger))
+- [1] go-mysql-server: [https://github.com/dolthub/go-mysql-server](https://github.com/dolthub/go-mysql-server)
+- [2] badger: [https://github.com/hypermodeinc/badger](https://github.com/hypermodeinc/badger) (或其主流fork如 [https://github.com/dgraph-io/badger](https://github.com/dgraph-io/badger))
