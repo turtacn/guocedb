@@ -1,0 +1,136 @@
+# configs/config.yaml.example
+# Example configuration file for Guocedb.
+# Copy this file to config.yaml and modify as needed.
+#
+# Guocedb 的示例配置文件。
+# 将此文件复制到 config.yaml 并根据需要修改。
+
+# Logging configuration
+# 日志记录配置
+logging:
+  # Log level: debug, info, warn, error, fatal, panic
+  # 日志级别：debug, info, warn, error, fatal, panic
+  level: "info"
+  # Log format: text, json
+  # 日志格式：text, json
+  format: "text"
+  # Log output: stdout, stderr, file
+  # 日志输出：stdout, stderr, file
+  output: "stdout"
+  # File path for log output (if output is file)
+  # 日志输出的文件路径（如果输出是 file）
+  # file_path: "/var/log/guocedb/guocedb.log"
+
+
+# Storage configuration
+# 存储配置
+storage:
+  # Storage engine type: badger, kvd, mdd, mdi (placeholder types)
+  # 存储引擎类型：badger, kvd, mdd, mdi (占位符类型)
+  engine: "badger"
+  # Configuration specific to the chosen storage engine
+  # 特定于所选存储引擎的配置
+  badger:
+    # Path to the Badger database directory
+    # Badger 数据库目录的路径
+    data_path: "./data/badger"
+    # Path to the Badger Write-Ahead Log (WAL) directory (can be same as data_path)
+    # Badger Write-Ahead Log (WAL) 目录的路径（可以与 data_path 相同）
+    wal_path: "./data/badger"
+    # Sync writes to disk immediately. Set to true for durability, false for performance.
+    # 立即将写入同步到磁盘。设置为 true 以实现持久性，设置为 false 以实现性能。
+    sync_writes: true
+    # ValueLogFileSize in bytes. Defaults to 1GB.
+    # ValueLogFileSize (字节)。默认为 1GB。
+    # value_log_file_size: 1073741824 # 1GB
+    # MaxTableSize in bytes. Defaults to 64MB.
+    # MaxTableSize (字节)。默认为 64MB。
+    # max_table_size: 67108864 # 64MB
+    # NumVersions to keep for each key. Defaults to 1.
+    # 为每个 key 保留的版本数。默认为 1。
+    # num_versions: 1
+    # Compression algorithm: none, snappy, zstd (if built with support)
+    # 压缩算法：none, snappy, zstd (如果构建时支持)
+    # compression: "snappy"
+
+
+# Network configuration
+# 网络配置
+network:
+  # MySQL protocol server configuration
+  # MySQL 协议服务器配置
+  mysql:
+    # Host to bind to (e.g., 127.0.0.1 for local, 0.0.0.0 for all interfaces)
+    # 要绑定的主机（例如，127.0.0.1 表示本地，0.0.0.0 表示所有接口）
+    bind_host: "127.0.0.1"
+    # Port to listen on (default MySQL port is 3306)
+    # 要监听的端口（默认 MySQL 端口为 3306）
+    bind_port: 3306
+    # # TLS configuration (optional)
+    # # TLS 配置（可选）
+    # tls:
+    #   enabled: false
+    #   cert_file: "/path/to/server.pem"
+    #   key_file: "/path/to/server.key"
+    #   ca_file: "/path/to/ca.pem" # For client certificate verification
+
+  # REST API server configuration (placeholder)
+  # REST API 服务器配置（占位符）
+  rest:
+    enabled: false # Set to true to enable the REST API
+    bind_host: "127.0.0.1"
+    bind_port: 8080
+    # # TLS configuration (optional)
+    # # TLS 配置（可选）
+    # tls:
+    #   enabled: false
+    #   cert_file: "/path/to/server.pem"
+    #   key_file: "/path/to/server.key"
+
+
+# Security configuration (placeholder)
+# 安全配置（占位符）
+# security:
+#   authn:
+#     # Authentication method: simple, ldap, oauth
+#     method: "simple" # Placeholder
+#     # Simple authentication credentials (for simple method only)
+#     # In a real system, store credentials securely (e.g., hashed in a system table).
+#     simple_users:
+#       root: "password" # WARNING: Hardcoded password in config is insecure!
+#       test: "test"
+#   authz:
+#     # Authorization method: simple, rbac
+#     method: "simple" # Placeholder (e.g., simple grants all to root)
+#   crypto:
+#     # Master key for data encryption (if encryption is enabled in storage)
+#     # WARNING: Storing master key in config is insecure! Use a KMS in production.
+#     # master_key: "your_super_secret_master_key_32_bytes" # Example (needs to be 32 bytes for AES-256)
+
+
+# Maintenance configuration (placeholder)
+# 维护配置（占位符）
+# maintenance:
+#   metrics:
+#     enabled: false # Set to true to expose metrics
+#     bind_host: "127.0.0.1"
+#     bind_port: 9090 # Default Prometheus metrics port
+#     path: "/metrics"
+#   status:
+#     enabled: false # Set to true to expose status endpoint
+#     bind_host: "127.0.0.1"
+#     bind_port: 8081
+#     path: "/status"
+#   diagnostic:
+#     enabled: false # Set to true to expose diagnostic endpoints (e.g., pprof, health checks)
+#     bind_host: "127.0.0.1"
+#     bind_port: 8082
+
+# Clustering/Mesh configuration (placeholder for distributed versions)
+# 集群/网络配置（分布式版本的占位符）
+# clustering:
+#   enabled: false
+#   node_id: "node-1"
+#   listen_address: "127.0.0.1:7946" # Gossip protocol address
+#   advertise_address: "127.0.0.1:7946"
+#   join_addresses: ["127.0.0.1:7946"] # Addresses of other nodes to join

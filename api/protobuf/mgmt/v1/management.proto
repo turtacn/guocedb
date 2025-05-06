@@ -1,0 +1,90 @@
+// api/protobuf/mgmt/v1/management.proto
+
+syntax = "proto3";
+
+// Package mgmt.v1 defines the management API for Guocedb.
+// This API is used for administrative tasks such as database and table management,
+// user management, configuration, status, and diagnostics.
+package mgmt.v1;
+
+import "google/protobuf/empty.proto"; // For empty request/response messages
+
+option go_package = "github.com/turtacn/guocedb/api/protobuf/mgmt/v1;mgmtv1"; // Go package and alias
+
+
+// ManagementService defines the gRPC service for database management operations.
+// ManagementService 定义了用于数据库管理操作的 gRPC 服务。
+service ManagementService {
+  // CreateDatabase creates a new database.
+  // CreateDatabase 创建一个新的数据库。
+  rpc CreateDatabase (CreateDatabaseRequest) returns (CreateDatabaseResponse);
+
+  // DropDatabase drops an existing database.
+  // DropDatabase 删除一个现有数据库。
+  rpc DropDatabase (DropDatabaseRequest) returns (DropDatabaseResponse);
+
+  // ListDatabases lists all databases.
+  // ListDatabases 列出所有数据库。
+  rpc ListDatabases (ListDatabasesRequest) returns (ListDatabasesResponse);
+
+  // TODO: Add RPC methods for table management (CreateTable, DropTable, RenameTable, GetTableSchema, ListTables).
+  // TODO: 添加用于表管理（CreateTable, DropTable, RenameTable, GetTableSchema, ListTables）的 RPC 方法。
+
+  // TODO: Add RPC methods for user and permission management.
+  // TODO: 添加用于用户和权限管理的 RPC 方法。
+
+  // TODO: Add RPC methods for configuration management.
+  // TODO: 添加用于配置管理的 RPC 方法。
+
+  // TODO: Add RPC methods for status, metrics, and diagnostics.
+  // TODO: 添加用于状态、指标和诊断的 RPC 方法。
+}
+
+// CreateDatabaseRequest is the request message for creating a database.
+// CreateDatabaseRequest 是创建数据库的请求消息。
+message CreateDatabaseRequest {
+  string db_name = 1; // The name of the database to create. / 要创建的数据库名称。
+  // TODO: Add options for database properties (e.g., character set, collation).
+  // TODO: 添加数据库属性选项（例如，字符集、排序规则）。
+}
+
+// CreateDatabaseResponse is the response message for creating a database.
+// CreateDatabaseResponse 是创建数据库的响应消息。
+message CreateDatabaseResponse {
+  // Typically empty on success, or include created database details.
+  // 成功时通常为空，或包含创建的数据库详情。
+  string message = 1; // Optional success message. / 可选的成功消息。
+}
+
+// DropDatabaseRequest is the request message for dropping a database.
+// DropDatabaseRequest 是删除数据库的请求消息。
+message DropDatabaseRequest {
+  string db_name = 1; // The name of the database to drop. / 要删除的数据库名称。
+  bool if_exists = 2; // If true, don't return an error if the database does not exist. / 如果为 true，则在数据库不存在时不返回错误。
+}
+
+// DropDatabaseResponse is the response message for dropping a database.
+// DropDatabaseResponse 是删除数据库的响应消息。
+message DropDatabaseResponse {
+  // Typically empty on success.
+  // 成功时通常为空。
+  string message = 1; // Optional success message. / 可选的成功消息。
+}
+
+// ListDatabasesRequest is the request message for listing databases.
+// ListDatabasesRequest 是列出数据库的请求消息。
+message ListDatabasesRequest {
+  // No fields needed for a basic list all request.
+  // 基本列出所有请求不需要字段。
+  // Can use google.protobuf.Empty.
+  // 可以使用 google.protobuf.Empty。
+}
+
+// ListDatabasesResponse is the response message for listing databases.
+// ListDatabasesResponse 是列出数据库的响应消息。
+message ListDatabasesResponse {
+  repeated string db_names = 1; // The list of database names. / 数据库名称列表。
+}
+
+// TODO: Define messages for other RPC methods (e.g., Table messages, User messages).
+// TODO: 定义用于其他 RPC 方法的消息（例如，表消息、用户消息）。
