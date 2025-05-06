@@ -1,8 +1,7 @@
 # guocedb
 0-1 通用数据库 Demo，面向guoce
 
-## 项目目录结构 (Project Directory Structure)
-
+## project directory 
 ```plaintext
 guocedb/
 ├── api/                      # 外部 API 定义 (External API definitions)
