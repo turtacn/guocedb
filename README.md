@@ -1,124 +1,154 @@
-# guocedb
-0-1 通用数据库 Demo，面向guoce
+# Guocedb
 
-## project directory 
-```plaintext
-guocedb/
-├── api/                      # 外部 API 定义 (External API definitions)
-│   ├── protobuf/             # gRPC 服务定义 (gRPC service definitions)
-│   │   └── mgmt/             # 管理 API (Management API)
-│   │       └── v1/
-│   │           └── management.proto # 管理服务 proto 文件 (Management service proto file)
-│   └── rest/                 # RESTful API (未来扩展 / Future extension)
-│       └── rest.go           # REST API 占位符 (REST API placeholder)
-├── cmd/                      # 项目可执行文件入口 (Project executables entry points)
-│   ├── guocedb-cli/          # 命令行客户端 (Command-line client)
-│   │   └── main.go
-│   └── guocedb-server/       # 数据库服务端 (Database server)
-│       └── main.go
-├── common/                   # 通用基础包 (Common base packages)
-│   ├── config/               # 配置加载与管理 (Configuration loading and management)
-│   │   └── config.go
-│   ├── constants/            # 全局常量定义 (Global constants definition)
-│   │   └── constants.go
-│   ├── errors/               # 统一错误定义与处理 (Unified error definition and handling)
-│   │   └── errors.go
-│   ├── log/                  # 统一日志接口与实现 (Unified logging interface and implementation)
-│   │   └── logger.go
-│   └── types/                # 基础数据类型 (Basic data types)
-│       ├── enum/             # 全局枚举类型 (Global enumeration types)
-│       │   └── enum.go
-│       └── value/            # SQL 值类型 (SQL value types)
-│           └── value.go
-├── compute/                  # 计算层 (Compute Layer)
-│   ├── analyzer/             # SQL 查询分析器 (SQL query analyzer)
-│   │   └── analyzer.go       # 分析器实现/包装 (Analyzer implementation/wrapper)
-│   ├── catalog/              # 元数据目录管理 (Metadata catalog management)
-│   │   ├── catalog.go        # Catalog 接口定义 (Catalog interface definition)
-│   │   ├── memory/           # 内存 Catalog 实现 (In-memory Catalog implementation)
-│   │   │   └── memory_catalog.go
-│   │   └── persistent/       # 持久化 Catalog 实现 (Persistent Catalog implementation)
-│   │       └── persistent_catalog.go
-│   ├── executor/             # 查询执行引擎 (Query execution engine)
-│   │   ├── engine.go         # 执行引擎接口与基础实现 (Engine interface and base implementation)
-│   │   └── vector/           # 向量化执行相关 (Vectorized execution related)
-│   │       └── vector.go     # 向量化占位符 (Vectorization placeholder)
-│   ├── optimizer/            # 查询优化器 (Query optimizer)
-│   │   └── optimizer.go      # 优化器实现/包装 (Optimizer implementation/wrapper)
-│   ├── parser/               # SQL 解析器 (SQL parser)
-│   │   └── parser.go         # 解析器实现/包装 (Parser implementation/wrapper)
-│   ├── plan/                 # 查询计划节点 (Query plan nodes)
-│   │   └── plan.go           # 计划节点定义 (Plan node definitions)
-│   ├── scheduler/            # 分布式调度器 (Distributed scheduler)
-│   │   └── scheduler.go      # 调度器占位符 (Scheduler placeholder)
-│   └── transaction/          # 事务管理器 (Transaction manager)
-│       └── manager.go        # 事务管理器接口与实现 (Txn manager interface and implementation)
-├── interfaces/               # 核心抽象接口定义 (Core abstraction interface definitions)
-│   └── storage.go            # 存储抽象层接口 (Storage Abstraction Layer interface)
-├── internal/                 # 项目内部实现细节 (Internal implementation details)
-│   ├── encoding/             # 内部数据编码/解码 (Internal data encoding/decoding)
-│   │   └── encoding.go       # 内部编码工具 (Internal encoding utilities)
-│   └── utils/                # 内部工具函数 (Internal utility functions)
-│       └── utils.go          # 内部辅助函数 (Internal helper functions)
-├── maintenance/              # 维护层 (Maintenance Layer)
-│   ├── diagnostic/           # 诊断工具 (Diagnostic tools)
-│   │   └── diagnostic.go     # 诊断功能实现 (Diagnostic features implementation)
-│   ├── metrics/              # 性能指标收集 (Performance metrics collection)
-│   │   └── metrics.go        # 指标收集实现 (Metrics collection implementation)
-│   └── status/               # 状态报告 (Status reporting)
-│       └── status.go         # 状态报告实现 (Status reporting implementation)
-├── network/                  # 网络层 (Networking Layer)
-│   ├── mesh/                 # 服务网格集成 (Service mesh integration)
-│   │   └── mesh.go           # 服务网格占位符 (Service mesh placeholder)
-│   └── server/               # 基础网络服务 (Basic network server)
-│       └── server.go         # 网络服务基础结构 (Network server infrastructure)
-├── protocol/                 # 数据库协议实现 (Database protocol implementations)
-│   └── mysql/                # MySQL 协议处理 (MySQL protocol handling)
-│       ├── auth.go           # MySQL 认证处理 (MySQL authentication handling)
-│       ├── connection.go     # 连接处理 (Connection handling)
-│       ├── handler.go        # GMS Handler 实现 (GMS Handler implementation)
-│       └── server.go         # MySQL 协议服务启动器 (MySQL protocol server starter)
-├── security/                 # 安全层 (Security Layer)
-│   ├── audit/                # 审计日志 (Audit logging)
-│   │   └── audit.go          # 审计实现 (Audit implementation)
-│   ├── authn/                # 身份认证 (Authentication)
-│   │   └── authn.go          # 认证实现 (Authentication implementation)
-│   ├── authz/                # 访问控制 (Authorization)
-│   │   └── authz.go          # 授权实现 (Authorization implementation)
-│   └── crypto/               # 数据加解密 (Data encryption/decryption)
-│       └── crypto.go         # 加密实现 (Encryption implementation)
-├── storage/                  # 存储层 (Storage Layer)
-│   ├── engines/              # 存储引擎实现 (Storage engine implementations)
-│   │   ├── badger/           # Badger KV 存储引擎 (Badger KV storage engine)
-│   │   │   ├── badger.go     # Badger 引擎适配器 (Badger engine adapter)
-│   │   │   ├── database.go   # 数据库级别操作 (Database level operations)
-│   │   │   ├── encoding.go   # Badger 特定的 K/V 编码 (Badger specific K/V encoding)
-│   │   │   ├── iterator.go   # 数据迭代器 (Data iterator)
-│   │   │   ├── table.go      # 表级别操作 (Table level operations)
-│   │   │   └── transaction.go # 事务适配 (Transaction adaptation)
-│   │   ├── kvd/              # KVD 引擎占位符 (KVD engine placeholder)
-│   │   │   └── kvd.go
-│   │   ├── mdd/              # MDD 引擎占位符 (MDD engine placeholder)
-│   │   │   └── mdd.go
-│   │   └── mdi/              # MDI 引擎占位符 (MDI engine placeholder)
-│   │       └── mdi.go
-│   └── sal/                  # 存储抽象层实现 (Storage Abstraction Layer implementation)
-│       └── adapter.go        # 适配器实现 (Adapter implementation)
-├── docs/                     # 文档 (Documentation)
-│   └── architecture.md       # 架构设计文档 (Architecture design document)
-├── scripts/                  # 构建、部署、测试脚本 (Build, deploy, test scripts)
-│   ├── build.sh
-│   └── test.sh
-├── configs/                  # 配置文件示例 (Configuration examples)
-│   └── config.yaml.example
-├── test/                     # 测试代码 (Test code)
-│   ├── integration/          # 集成测试 (Integration tests)
-│   │   └── integration_test.go
-│   └── unit/                 # 单元测试 (Unit tests)
-│       └── unit_test.go
-├── .gitignore
-├── go.mod
-├── go.sum
-├── LICENSE                   # 选择合适的开源许可证 (Choose an appropriate open-source license)
-└── README.md
+Guocedb is a distributed SQL database built with Go, leveraging the go-mysql-server framework and initially using BadgerDB as a storage engine. It is designed with a layered architecture to be modular, scalable, and extensible.
+
+**Note:** This project is currently under development and is not ready for production use. It serves as a learning exercise and a foundation for building a robust distributed database.
+
+## Features
+
+* **SQL Compatibility:** Supports a significant subset of MySQL syntax via the go-mysql-server framework.
+* **MySQL Protocol:** Communicates using the standard MySQL wire protocol, allowing compatibility with existing MySQL clients.
+* **Pluggable Storage Engine:** Designed to support various storage engines (currently implementing a BadgerDB integration).
+* **Layered Architecture:** Clearly defined layers for common concerns like networking, protocol handling, compute (SQL processing), storage, security, and maintenance.
+* **Command-Line Interface (CLI):** A basic CLI tool for interacting with the database.
+* **Configuration:** Configurable via a YAML file.
+* **Basic Logging:** Integrated logging system.
+
+**Planned / Future Features:**
+
+* Distributed Clustering and Replication (via the Network Mesh layer)
+* Support for other Storage Engines (e.g., Key-Value Data, Multi-Dimensional Data, Multi-Dimensional Index placeholders)
+* Advanced Security Features (Authentication, Authorization, Encryption, Auditing)
+* Management API (gRPC/Protobuf) and REST API
+* Maintenance Tools (Metrics, Status, Diagnostics)
+* Query Optimization and Vectorized Execution
+* Comprehensive Testing (Unit and Integration)
+
+## Architecture
+
+Guocedb follows a layered architecture:
+
+<img src="./docs/imgs/overview.png" width="100%">
+
+  * **Network:** Handles incoming network connections and routes them to the appropriate protocol handler. Includes a placeholder for inter-node mesh networking in a distributed setup.
+  * **Protocol:** Implements specific database wire protocols (currently MySQL). Deserializes client requests and serializes responses.
+  * **Compute:** The core SQL processing layer. Includes the Parser, Analyzer, Optimizer, Executor, Plan representation, Catalog (metadata), and Transaction Management. Heavily relies on the go-mysql-server framework.
+  * **Storage:** Manages data persistence. Provides an interface for interacting with various storage engine implementations (like BadgerDB). Handles transactions at the storage level.
+  * **Security:** Implements authentication, authorization, encryption, and auditing.
+  * **Maintenance:** Provides tools for operational tasks like collecting metrics, reporting status, and diagnostics.
+  * **Internal:** Contains internal helper utilities (e.g., encoding/decoding, common utils).
+  * **Common:** Shared foundational components like configuration, error handling, logging, and common types.
+
+## Getting Started
+
+### Prerequisites
+
+  * Go (version 1.18 or later recommended)
+  * Git
+
+### Cloning the Repository
+
+```bash
+git clone [https://github.com/turtacn/guocedb.git](https://github.com/turtacn/guocedb.git)
+cd guocedb
 ```
+
+### Building Guocedb
+
+Use the provided build script to compile the server and client binaries.
+
+```bash
+chmod +x scripts/build.sh
+./scripts/build.sh
+```
+
+This will create `guocedb-server` and `guocedb-cli` executables in the `./bin` directory.
+
+### Running the Server
+
+Use the example configuration file to start the server.
+
+```bash
+# Make sure you have a config.yaml (copy from config.yaml.example)
+cp configs/config.yaml.example config.yaml
+
+# Create data directories if needed (configured in config.yaml)
+mkdir -p ./data/badger
+
+# Run the server
+./bin/guocedb-server --config config.yaml
+```
+
+The server will start listening on the configured network addresses (default MySQL port: 3306, default REST API port: 8080 if enabled). Press `Ctrl+C` to stop the server gracefully.
+
+### Connecting to Guocedb
+
+You can connect to the running Guocedb server using the provided CLI tool or any standard MySQL client.
+
+**Using guocedb-cli:**
+
+```bash
+# Connect and execute a query
+./bin/guocedb-cli -h 127.0.0.1 -P 3306 -u root -p password -e "SELECT 'Hello, Guocedb!';"
+
+# Connect and specify a database (if created)
+# ./bin/guocedb-cli -h 127.0.0.1 -P 3306 -u root -p password -D mydatabase -e "SELECT * FROM mytable;"
+```
+
+**Using a standard MySQL client (e.g., `mysql` command-line tool):**
+
+```bash
+mysql -h 127.0.0.1 -P 3306 -u root -p password
+```
+
+You can then execute SQL commands within the MySQL client session.
+
+## Configuration
+
+Guocedb is configured using a YAML file. An example is provided at `configs/config.yaml.example`.
+
+Copy this file to `config.yaml` and edit it to suit your needs. The command-line server executable uses the `--config` flag to specify the configuration file path.
+
+Key configuration sections include:
+
+  * `logging`: Configures log level, format, and output.
+  * `storage`: Configures the storage engine type and its specific settings (e.g., Badger data paths).
+  * `network`: Configures the network listeners for different protocols (MySQL, REST API).
+  * `security` (Placeholder): Configuration for authentication and authorization.
+  * `maintenance` (Placeholder): Configuration for metrics and status endpoints.
+  * `clustering` (Placeholder): Configuration for distributed setup.
+
+## Testing
+
+Run the test script to execute the project's unit and integration tests.
+
+```bash
+chmod +x scripts/test.sh
+./scripts/test.sh
+```
+
+  * **Unit Tests:** Located in `test/unit`. Test individual components in isolation.
+  * **Integration Tests:** Located in `test/integration`. Test the interaction between components and require a running server instance (managed by `TestMain`).
+
+## Future Work
+
+This project is a starting point. Significant areas for future development include:
+
+  * Full implementation of placeholder storage engines (KVD, MDD, MDI).
+  * Implementing the distributed mesh network for clustering and replication.
+  * Adding robust security features (encryption, full authentication methods, fine-grained authorization).
+  * Developing the Management API (gRPC) and REST API.
+  * Implementing comprehensive maintenance and diagnostic tools.
+  * Advanced query optimization techniques and vectorized execution.
+  * Improving error handling and reliability.
+  * Adding documentation and examples.
+
+## Contributing
+
+Contributions are welcome\! Please feel free to open issues or submit pull requests.
+
+## License
+
+This project is licensed under the Apache License, Version 2.0. See the [https://www.google.com/search?q=LICENSE](https://www.google.com/search?q=LICENSE) file for details.
+
+
