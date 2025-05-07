@@ -49,7 +49,7 @@ Guocedb follows a layered architecture:
 ### Cloning the Repository
 
 ```bash
-git clone [https://github.com/turtacn/guocedb.git](https://github.com/turtacn/guocedb.git)
+git clone ![https://github.com/turtacn/guocedb.git](https://github.com/turtacn/guocedb.git)
 cd guocedb
 ```
 
@@ -62,7 +62,7 @@ chmod +x scripts/build.sh
 ./scripts/build.sh
 ```
 
-This will create `guocedb-server` and `guocedb-cli` executables in the `./bin` directory.
+This will create `guocedb_server` and `guocedb_cli` executables in the `./bin` directory.
 
 ### Running the Server
 
@@ -76,7 +76,7 @@ cp configs/config.yaml.example config.yaml
 mkdir -p ./data/badger
 
 # Run the server
-./bin/guocedb-server --config config.yaml
+./bin/guocedb_server --config config.yaml
 ```
 
 The server will start listening on the configured network addresses (default MySQL port: 3306, default REST API port: 8080 if enabled). Press `Ctrl+C` to stop the server gracefully.
@@ -85,14 +85,14 @@ The server will start listening on the configured network addresses (default MyS
 
 You can connect to the running Guocedb server using the provided CLI tool or any standard MySQL client.
 
-**Using guocedb-cli:**
+**Using guocedb_cli:**
 
 ```bash
 # Connect and execute a query
-./bin/guocedb-cli -h 127.0.0.1 -P 3306 -u root -p password -e "SELECT 'Hello, Guocedb!';"
+./bin/guocedb_cli -h 127.0.0.1 -P 3306 -u root -p password -e "SELECT 'Hello, Guocedb!';"
 
 # Connect and specify a database (if created)
-# ./bin/guocedb-cli -h 127.0.0.1 -P 3306 -u root -p password -D mydatabase -e "SELECT * FROM mytable;"
+# ./bin/guocedb_cli -h 127.0.0.1 -P 3306 -u root -p password -D mydatabase -e "SELECT * FROM mytable;"
 ```
 
 **Using a standard MySQL client (e.g., `mysql` command-line tool):**
