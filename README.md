@@ -4,7 +4,7 @@ Guocedb is a distributed SQL database built with Go, leveraging the go-mysql-ser
 
 **Note:** This project is currently under development and is not ready for production use. It serves as a learning exercise and a foundation for building a robust distributed database.
 
-**Note:** Detailed architecture & design could be found at ![architecture](https://github.com/turtacn/guocedb/blob/master/docs/architecture.md)
+**Note:** Detailed architecture & design could be found at ![](https://github.com/turtacn/guocedb/blob/master/docs/architecture.md)
 
 
 ## Features
