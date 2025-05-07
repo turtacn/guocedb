@@ -1,6 +1,6 @@
 # Guocedb
 
-Guocedb is a distributed SQL database built with Go, leveraging the go-mysql-server framework and initially using BadgerDB as a storage engine. It is designed with a layered architecture to be modular, scalable, and extensible.
+Guocedb is a SQL database built with Go, leveraging the go-mysql-server framework and initially using BadgerDB as a storage engine. It is designed with a layered architecture to be modular, scalable, and extensible.
 
 **Note:** This project is currently under development and is not ready for production use. It serves as a learning exercise and a foundation for building a robust distributed database.
 
