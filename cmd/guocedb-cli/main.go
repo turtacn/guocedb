@@ -1,1 +1,5 @@
-package guocedb-cli
+package main
+
+func main() {
+
+}

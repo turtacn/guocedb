@@ -1,1 +1,5 @@
-package guocedb-server
+package main
+
+func main() {
+
+}
