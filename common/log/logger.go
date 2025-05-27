@@ -1,5 +1,5 @@
-// Package log 提供了 GuoceDB 的结构化日志系统
-// Package log provides structured logging system for GuoceDB
+// Package log 实现GuoceDB的统一日志系统
+// Package log implements unified logging system for GuoceDB
 package log
 
 import (
@@ -12,1003 +12,1467 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
-	"github.com/guocedb/guocedb/common/constants"
-	"gopkg.in/natefinch/lumberjack.v2"
+	"github.com/turtacn/guocedb/common/constants"
+	"github.com/turtacn/guocedb/common/errors"
 )
 
-// ===== 日志级别 Log Levels =====
-
-// Level 日志级别类型
-// Level log level type
-type Level int32
+// LogLevel 日志级别枚举
+// LogLevel enumeration for log levels
+type LogLevel int
 
 const (
-	// DebugLevel 调试级别
-	// DebugLevel debug level
-	DebugLevel Level = iota
-	// InfoLevel 信息级别
-	// InfoLevel info level
-	InfoLevel
-	// WarnLevel 警告级别
-	// WarnLevel warning level
-	WarnLevel
-	// ErrorLevel 错误级别
-	// ErrorLevel error level
-	ErrorLevel
-	// FatalLevel 致命错误级别
-	// FatalLevel fatal error level
-	FatalLevel
-	// PanicLevel 恐慌级别
-	// PanicLevel panic level
-	PanicLevel
+	// LevelTrace 跟踪级别
+	// LevelTrace trace level
+	LevelTrace LogLevel = iota
+	// LevelDebug 调试级别
+	// LevelDebug debug level
+	LevelDebug
+	// LevelInfo 信息级别
+	// LevelInfo info level
+	LevelInfo
+	// LevelWarn 警告级别
+	// LevelWarn warning level
+	LevelWarn
+	// LevelError 错误级别
+	// LevelError error level
+	LevelError
+	// LevelFatal 致命错误级别
+	// LevelFatal fatal level
+	LevelFatal
 )
 
 // String 返回日志级别的字符串表示
 // String returns string representation of log level
-func (l Level) String() string {
+func (l LogLevel) String() string {
 	switch l {
-	case DebugLevel:
+	case LevelTrace:
+		return "TRACE"
+	case LevelDebug:
 		return "DEBUG"
-	case InfoLevel:
+	case LevelInfo:
 		return "INFO"
-	case WarnLevel:
+	case LevelWarn:
 		return "WARN"
-	case ErrorLevel:
+	case LevelError:
 		return "ERROR"
-	case FatalLevel:
+	case LevelFatal:
 		return "FATAL"
-	case PanicLevel:
-		return "PANIC"
 	default:
-		return "UNKNOWN"
+		return fmt.Sprintf("UNKNOWN_LEVEL(%d)", int(l))
 	}
 }
 
-// ParseLevel 解析日志级别字符串
-// ParseLevel parses log level string
-func ParseLevel(level string) (Level, error) {
+// ParseLogLevel 从字符串解析日志级别
+// ParseLogLevel parses log level from string
+func ParseLogLevel(level string) LogLevel {
 	switch strings.ToUpper(level) {
+	case "TRACE":
+		return LevelTrace
 	case "DEBUG":
-		return DebugLevel, nil
+		return LevelDebug
 	case "INFO":
-		return InfoLevel, nil
+		return LevelInfo
 	case "WARN", "WARNING":
-		return WarnLevel, nil
+		return LevelWarn
 	case "ERROR":
-		return ErrorLevel, nil
+		return LevelError
 	case "FATAL":
-		return FatalLevel, nil
-	case "PANIC":
-		return PanicLevel, nil
+		return LevelFatal
 	default:
-		return InfoLevel, fmt.Errorf("invalid log level: %s", level)
+		return LevelInfo
 	}
 }
 
-// ===== 日志字段 Log Fields =====
+// LogFormat 日志格式枚举
+// LogFormat enumeration for log formats
+type LogFormat int
+
+const (
+	// FormatText 文本格式
+	// FormatText text format
+	FormatText LogFormat = iota
+	// FormatJSON JSON格式
+	// FormatJSON JSON format
+	FormatJSON
+)
+
+// String 返回日志格式的字符串表示
+// String returns string representation of log format
+func (f LogFormat) String() string {
+	switch f {
+	case FormatText:
+		return "text"
+	case FormatJSON:
+		return "json"
+	default:
+		return "text"
+	}
+}
+
+// ParseLogFormat 从字符串解析日志格式
+// ParseLogFormat parses log format from string
+func ParseLogFormat(format string) LogFormat {
+	switch strings.ToLower(format) {
+	case "json":
+		return FormatJSON
+	case "text":
+		return FormatText
+	default:
+		return FormatText
+	}
+}
 
 // Fields 日志字段类型
-// Fields log fields type
+// Fields type for log fields
 type Fields map[string]interface{}
 
-// ===== 日志格式化器 Log Formatter =====
-
-// Formatter 日志格式化器接口
-// Formatter log formatter interface
-type Formatter interface {
-	Format(entry *Entry) ([]byte, error)
+// LogEntry 日志条目结构
+// LogEntry structure for log entries
+type LogEntry struct {
+	Timestamp time.Time `json:"timestamp"`
+	Level     LogLevel  `json:"level"`
+	Message   string    `json:"message"`
+	Fields    Fields    `json:"fields,omitempty"`
+	Caller    string    `json:"caller,omitempty"`
+	Stack     string    `json:"stack,omitempty"`
+	TraceID   string    `json:"trace_id,omitempty"`
+	SpanID    string    `json:"span_id,omitempty"`
 }
 
-// TextFormatter 文本格式化器
-// TextFormatter text formatter
-type TextFormatter struct {
-	// TimestampFormat 时间戳格式
-	// TimestampFormat timestamp format
-	TimestampFormat string
-	// DisableColors 禁用颜色
-	// DisableColors disable colors
-	DisableColors bool
-	// FullTimestamp 显示完整时间戳
-	// FullTimestamp show full timestamp
-	FullTimestamp bool
-	// DisableTimestamp 禁用时间戳
-	// DisableTimestamp disable timestamp
-	DisableTimestamp bool
-}
+// String 返回日志条目的字符串表示
+// String returns string representation of log entry
+func (e *LogEntry) String() string {
+	caller := ""
+	if e.Caller != "" {
+		caller = fmt.Sprintf(" [%s]", e.Caller)
+	}
 
-// Format 格式化日志条目
-// Format formats log entry
-func (f *TextFormatter) Format(entry *Entry) ([]byte, error) {
-	var b strings.Builder
-
-	// 时间戳
-	if !f.DisableTimestamp {
-		timestamp := entry.Time.Format(f.TimestampFormat)
-		if f.TimestampFormat == "" {
-			timestamp = entry.Time.Format(time.RFC3339)
+	traceInfo := ""
+	if e.TraceID != "" {
+		traceInfo = fmt.Sprintf(" [trace:%s", e.TraceID)
+		if e.SpanID != "" {
+			traceInfo += fmt.Sprintf(",span:%s", e.SpanID)
 		}
-		b.WriteString(timestamp)
-		b.WriteString(" ")
+		traceInfo += "]"
 	}
 
-	// 日志级别
-	levelText := strings.ToUpper(entry.Level.String())
-	if !f.DisableColors {
-		levelText = f.colorize(levelText, entry.Level)
-	}
-	b.WriteString("[")
-	b.WriteString(levelText)
-	b.WriteString("] ")
-
-	// 消息
-	b.WriteString(entry.Message)
-
-	// 字段
-	if len(entry.Fields) > 0 {
-		b.WriteString(" ")
-		first := true
-		for k, v := range entry.Fields {
-			if !first {
-				b.WriteString(" ")
-			}
-			b.WriteString(k)
-			b.WriteString("=")
-			b.WriteString(fmt.Sprintf("%v", v))
-			first = false
+	fields := ""
+	if len(e.Fields) > 0 {
+		parts := make([]string, 0, len(e.Fields))
+		for k, v := range e.Fields {
+			parts = append(parts, fmt.Sprintf("%s=%v", k, v))
 		}
+		fields = fmt.Sprintf(" {%s}", strings.Join(parts, " "))
 	}
 
-	// 调用信息
-	if entry.Caller != "" {
-		b.WriteString(" ")
-		b.WriteString(entry.Caller)
-	}
-
-	b.WriteString("\n")
-	return []byte(b.String()), nil
+	return fmt.Sprintf("%s [%s]%s%s %s%s",
+		e.Timestamp.Format("2006-01-02 15:04:05.000"),
+		e.Level.String(),
+		caller,
+		traceInfo,
+		e.Message,
+		fields)
 }
 
-// colorize 为日志级别添加颜色
-// colorize adds color to log level
-func (f *TextFormatter) colorize(text string, level Level) string {
-	if f.DisableColors {
-		return text
+// ToJSON 将日志条目转换为JSON格式
+// ToJSON converts log entry to JSON format
+func (e *LogEntry) ToJSON() ([]byte, error) {
+	return json.Marshal(e)
+}
+
+// Logger 日志接口
+// Logger interface for logging
+type Logger interface {
+	// SetLevel 设置日志级别
+	// SetLevel sets log level
+	SetLevel(level LogLevel)
+
+	// GetLevel 获取日志级别
+	// GetLevel gets log level
+	GetLevel() LogLevel
+
+	// SetFormat 设置日志格式
+	// SetFormat sets log format
+	SetFormat(format LogFormat)
+
+	// GetFormat 获取日志格式
+	// GetFormat gets log format
+	GetFormat() LogFormat
+
+	// WithField 添加单个字段
+	// WithField adds single field
+	WithField(key string, value interface{}) Logger
+
+	// WithFields 添加多个字段
+	// WithFields adds multiple fields
+	WithFields(fields Fields) Logger
+
+	// WithContext 从上下文中提取字段
+	// WithContext extracts fields from context
+	WithContext(ctx context.Context) Logger
+
+	// WithCaller 添加调用者信息
+	// WithCaller adds caller information
+	WithCaller(skip int) Logger
+
+	// Trace 输出跟踪级别日志
+	// Trace outputs trace level log
+	Trace(args ...interface{})
+
+	// Tracef 输出格式化跟踪级别日志
+	// Tracef outputs formatted trace level log
+	Tracef(format string, args ...interface{})
+
+	// Debug 输出调试级别日志
+	// Debug outputs debug level log
+	Debug(args ...interface{})
+
+	// Debugf 输出格式化调试级别日志
+	// Debugf outputs formatted debug level log
+	Debugf(format string, args ...interface{})
+
+	// Info 输出信息级别日志
+	// Info outputs info level log
+	Info(args ...interface{})
+
+	// Infof 输出格式化信息级别日志
+	// Infof outputs formatted info level log
+	Infof(format string, args ...interface{})
+
+	// Warn 输出警告级别日志
+	// Warn outputs warning level log
+	Warn(args ...interface{})
+
+	// Warnf 输出格式化警告级别日志
+	// Warnf outputs formatted warning level log
+	Warnf(format string, args ...interface{})
+
+	// Error 输出错误级别日志
+	// Error outputs error level log
+	Error(args ...interface{})
+
+	// Errorf 输出格式化错误级别日志
+	// Errorf outputs formatted error level log
+	Errorf(format string, args ...interface{})
+
+	// Fatal 输出致命错误级别日志并退出程序
+	// Fatal outputs fatal level log and exits program
+	Fatal(args ...interface{})
+
+	// Fatalf 输出格式化致命错误级别日志并退出程序
+	// Fatalf outputs formatted fatal level log and exits program
+	Fatalf(format string, args ...interface{})
+
+	// Close 关闭日志器
+	// Close closes the logger
+	Close() error
+}
+
+// RotateConfig 日志轮转配置
+// RotateConfig configuration for log rotation
+type RotateConfig struct {
+	MaxSize    int  `json:"max_size"`    // 最大文件大小（MB）Maximum file size in MB
+	MaxBackups int  `json:"max_backups"` // 最大备份文件数量 Maximum number of backup files
+	MaxAge     int  `json:"max_age"`     // 最大保留天数 Maximum retention days
+	Compress   bool `json:"compress"`    // 是否压缩 Whether to compress
+}
+
+// DefaultRotateConfig 默认轮转配置
+// DefaultRotateConfig default rotation configuration
+var DefaultRotateConfig = &RotateConfig{
+	MaxSize:    constants.DefaultLogMaxSize,
+	MaxBackups: constants.DefaultLogMaxBackups,
+	MaxAge:     constants.DefaultLogMaxAge,
+	Compress:   constants.DefaultLogCompress,
+}
+
+// Config 日志配置
+// Config configuration for logger
+type Config struct {
+	Level      LogLevel      `json:"level"`       // 日志级别 Log level
+	Format     LogFormat     `json:"format"`      // 日志格式 Log format
+	Output     string        `json:"output"`      // 输出目标 Output target
+	File       string        `json:"file"`        // 日志文件路径 Log file path
+	Async      bool          `json:"async"`       // 是否异步 Whether async
+	BufferSize int           `json:"buffer_size"` // 缓冲区大小 Buffer size
+	Rotate     *RotateConfig `json:"rotate"`      // 轮转配置 Rotation configuration
+}
+
+// DefaultConfig 默认日志配置
+// DefaultConfig default logger configuration
+var DefaultConfig = &Config{
+	Level:      ParseLogLevel(constants.DefaultLogLevel),
+	Format:     ParseLogFormat(constants.DefaultLogFormat),
+	Output:     "file",
+	File:       constants.DefaultLogFile,
+	Async:      true,
+	BufferSize: 1000,
+	Rotate:     DefaultRotateConfig,
+}
+
+// standardLogger 标准日志实现
+// standardLogger standard logger implementation
+type standardLogger struct {
+	mu         sync.RWMutex
+	level      LogLevel
+	format     LogFormat
+	output     io.WriteCloser
+	fields     Fields
+	caller     bool
+	callerSkip int
+	async      bool
+	buffer     chan *LogEntry
+	done       chan struct{}
+	wg         sync.WaitGroup
+}
+
+// NewLogger 创建新的日志器
+// NewLogger creates new logger
+func NewLogger(config *Config) (Logger, error) {
+	if config == nil {
+		config = DefaultConfig
 	}
 
-	var color string
-	switch level {
-	case DebugLevel:
-		color = "\033[36m" // Cyan
-	case InfoLevel:
-		color = "\033[32m" // Green
-	case WarnLevel:
-		color = "\033[33m" // Yellow
-	case ErrorLevel:
-		color = "\033[31m" // Red
-	case FatalLevel, PanicLevel:
-		color = "\033[35m" // Magenta
+	var output io.WriteCloser
+
+	switch config.Output {
+	case "stdout":
+		output = os.Stdout
+	case "stderr":
+		output = os.Stderr
+	case "file":
+		if config.File == "" {
+			config.File = constants.DefaultLogFile
+		}
+
+		// 确保日志目录存在
+		// Ensure log directory exists
+		dir := filepath.Dir(config.File)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return nil, errors.WrapError(errors.ErrCodeSystemFailure, "Failed to create log directory", err)
+		}
+
+		file, err := os.OpenFile(config.File, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			return nil, errors.WrapError(errors.ErrCodeSystemFailure, "Failed to open log file", err)
+		}
+		output = file
 	default:
-		color = "\033[0m" // Reset
-	}
-	return color + text + "\033[0m"
-}
-
-// JSONFormatter JSON格式化器
-// JSONFormatter JSON formatter
-type JSONFormatter struct {
-	// TimestampFormat 时间戳格式
-	// TimestampFormat timestamp format
-	TimestampFormat string
-	// DisableTimestamp 禁用时间戳
-	// DisableTimestamp disable timestamp
-	DisableTimestamp bool
-	// PrettyPrint 美化输出
-	// PrettyPrint pretty print
-	PrettyPrint bool
-}
-
-// Format 格式化日志条目为JSON
-// Format formats log entry as JSON
-func (f *JSONFormatter) Format(entry *Entry) ([]byte, error) {
-	data := make(Fields, len(entry.Fields)+4)
-
-	// 复制字段
-	for k, v := range entry.Fields {
-		data[k] = v
+		output = os.Stdout
 	}
 
-	// 添加标准字段
-	if !f.DisableTimestamp {
-		timestampFormat := f.TimestampFormat
-		if timestampFormat == "" {
-			timestampFormat = time.RFC3339Nano
+	logger := &standardLogger{
+		level:  config.Level,
+		format: config.Format,
+		output: output,
+		fields: make(Fields),
+		async:  config.Async,
+		done:   make(chan struct{}),
+	}
+
+	if config.Async {
+		bufferSize := config.BufferSize
+		if bufferSize <= 0 {
+			bufferSize = 1000
 		}
-		data["time"] = entry.Time.Format(timestampFormat)
+		logger.buffer = make(chan *LogEntry, bufferSize)
+		logger.startAsyncWriter()
 	}
 
-	data["level"] = entry.Level.String()
-	data["msg"] = entry.Message
-
-	if entry.Caller != "" {
-		data["caller"] = entry.Caller
-	}
-
-	// 转换为JSON
-	var output []byte
-	var err error
-	if f.PrettyPrint {
-		output, err = json.MarshalIndent(data, "", "  ")
-	} else {
-		output, err = json.Marshal(data)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal log entry: %w", err)
-	}
-
-	return append(output, '\n'), nil
+	return logger, nil
 }
 
-// ===== 日志条目 Log Entry =====
+// startAsyncWriter 启动异步写入器
+// startAsyncWriter starts async writer
+func (l *standardLogger) startAsyncWriter() {
+	l.wg.Add(1)
+	go func() {
+		defer l.wg.Done()
+		for {
+			select {
+			case entry := <-l.buffer:
+				l.writeEntry(entry)
+			case <-l.done:
+				// 处理剩余的日志条目
+				// Process remaining log entries
+				for {
+					select {
+					case entry := <-l.buffer:
+						l.writeEntry(entry)
+					default:
+						return
+					}
+				}
+			}
+		}
+	}()
+}
 
-// Entry 日志条目
-// Entry log entry
-type Entry struct {
-	Logger  *Logger
-	Level   Level
-	Time    time.Time
-	Message string
-	Fields  Fields
-	Caller  string
-	Context context.Context
+// SetLevel 设置日志级别
+// SetLevel sets log level
+func (l *standardLogger) SetLevel(level LogLevel) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.level = level
+}
+
+// GetLevel 获取日志级别
+// GetLevel gets log level
+func (l *standardLogger) GetLevel() LogLevel {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.level
+}
+
+// SetFormat 设置日志格式
+// SetFormat sets log format
+func (l *standardLogger) SetFormat(format LogFormat) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.format = format
+}
+
+// GetFormat 获取日志格式
+// GetFormat gets log format
+func (l *standardLogger) GetFormat() LogFormat {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.format
+}
+
+// clone 克隆日志器
+// clone clones the logger
+func (l *standardLogger) clone() *standardLogger {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+
+	fields := make(Fields)
+	for k, v := range l.fields {
+		fields[k] = v
+	}
+
+	return &standardLogger{
+		level:      l.level,
+		format:     l.format,
+		output:     l.output,
+		fields:     fields,
+		caller:     l.caller,
+		callerSkip: l.callerSkip,
+		async:      l.async,
+		buffer:     l.buffer,
+		done:       l.done,
+	}
 }
 
 // WithField 添加单个字段
 // WithField adds single field
-func (e *Entry) WithField(key string, value interface{}) *Entry {
-	return e.WithFields(Fields{key: value})
+func (l *standardLogger) WithField(key string, value interface{}) Logger {
+	logger := l.clone()
+	logger.fields[key] = value
+	return logger
 }
 
 // WithFields 添加多个字段
 // WithFields adds multiple fields
-func (e *Entry) WithFields(fields Fields) *Entry {
-	newFields := make(Fields, len(e.Fields)+len(fields))
-	for k, v := range e.Fields {
-		newFields[k] = v
-	}
+func (l *standardLogger) WithFields(fields Fields) Logger {
+	logger := l.clone()
 	for k, v := range fields {
-		newFields[k] = v
+		logger.fields[k] = v
+	}
+	return logger
+}
+
+// WithContext 从上下文中提取字段
+// WithContext extracts fields from context
+func (l *standardLogger) WithContext(ctx context.Context) Logger {
+	logger := l.clone()
+
+	// 提取跟踪ID
+	// Extract trace ID
+	if traceID := getTraceIDFromContext(ctx); traceID != "" {
+		logger.fields["trace_id"] = traceID
 	}
 
-	return &Entry{
-		Logger:  e.Logger,
-		Level:   e.Level,
-		Time:    e.Time,
-		Message: e.Message,
-		Fields:  newFields,
-		Caller:  e.Caller,
-		Context: e.Context,
+	// 提取跨度ID
+	// Extract span ID
+	if spanID := getSpanIDFromContext(ctx); spanID != "" {
+		logger.fields["span_id"] = spanID
+	}
+
+	// 提取用户ID
+	// Extract user ID
+	if userID := getUserIDFromContext(ctx); userID != "" {
+		logger.fields["user_id"] = userID
+	}
+
+	// 提取请求ID
+	// Extract request ID
+	if requestID := getRequestIDFromContext(ctx); requestID != "" {
+		logger.fields["request_id"] = requestID
+	}
+
+	return logger
+}
+
+// WithCaller 添加调用者信息
+// WithCaller adds caller information
+func (l *standardLogger) WithCaller(skip int) Logger {
+	logger := l.clone()
+	logger.caller = true
+	logger.callerSkip = skip + 1
+	return logger
+}
+
+// log 输出日志
+// log outputs log
+func (l *standardLogger) log(level LogLevel, args ...interface{}) {
+	if level < l.GetLevel() {
+		return
+	}
+
+	entry := &LogEntry{
+		Timestamp: time.Now(),
+		Level:     level,
+		Message:   fmt.Sprint(args...),
+		Fields:    make(Fields),
+	}
+
+	// 复制字段
+	// Copy fields
+	l.mu.RLock()
+	for k, v := range l.fields {
+		entry.Fields[k] = v
+	}
+
+	// 添加调用者信息
+	// Add caller information
+	if l.caller {
+		if caller := getCaller(l.callerSkip + 2); caller != "" {
+			entry.Caller = caller
+		}
+	}
+	l.mu.RUnlock()
+
+	// 提取特殊字段
+	// Extract special fields
+	if traceID, ok := entry.Fields["trace_id"].(string); ok {
+		entry.TraceID = traceID
+		delete(entry.Fields, "trace_id")
+	}
+
+	if spanID, ok := entry.Fields["span_id"].(string); ok {
+		entry.SpanID = spanID
+		delete(entry.Fields, "span_id")
+	}
+
+	// 对于错误级别，添加堆栈信息
+	// Add stack trace for error level
+	if level >= LevelError {
+		entry.Stack = getStackTrace(2)
+	}
+
+	if len(entry.Fields) == 0 {
+		entry.Fields = nil
+	}
+
+	l.writeLog(entry)
+}
+
+// logf 输出格式化日志
+// logf outputs formatted log
+func (l *standardLogger) logf(level LogLevel, format string, args ...interface{}) {
+	if level < l.GetLevel() {
+		return
+	}
+
+	entry := &LogEntry{
+		Timestamp: time.Now(),
+		Level:     level,
+		Message:   fmt.Sprintf(format, args...),
+		Fields:    make(Fields),
+	}
+
+	// 复制字段
+	// Copy fields
+	l.mu.RLock()
+	for k, v := range l.fields {
+		entry.Fields[k] = v
+	}
+
+	// 添加调用者信息
+	// Add caller information
+	if l.caller {
+		if caller := getCaller(l.callerSkip + 2); caller != "" {
+			entry.Caller = caller
+		}
+	}
+	l.mu.RUnlock()
+
+	// 提取特殊字段
+	// Extract special fields
+	if traceID, ok := entry.Fields["trace_id"].(string); ok {
+		entry.TraceID = traceID
+		delete(entry.Fields, "trace_id")
+	}
+
+	if spanID, ok := entry.Fields["span_id"].(string); ok {
+		entry.SpanID = spanID
+		delete(entry.Fields, "span_id")
+	}
+
+	// 对于错误级别，添加堆栈信息
+	// Add stack trace for error level
+	if level >= LevelError {
+		entry.Stack = getStackTrace(2)
+	}
+
+	if len(entry.Fields) == 0 {
+		entry.Fields = nil
+	}
+
+	l.writeLog(entry)
+}
+
+// writeLog 写入日志
+// writeLog writes log
+func (l *standardLogger) writeLog(entry *LogEntry) {
+	if l.async && l.buffer != nil {
+		select {
+		case l.buffer <- entry:
+		default:
+			// 缓冲区满，直接写入
+			// Buffer full, write directly
+			l.writeEntry(entry)
+		}
+	} else {
+		l.writeEntry(entry)
 	}
 }
 
-// WithContext 设置上下文
-// WithContext sets context
-func (e *Entry) WithContext(ctx context.Context) *Entry {
-	return &Entry{
-		Logger:  e.Logger,
-		Level:   e.Level,
-		Time:    e.Time,
-		Message: e.Message,
-		Fields:  e.Fields,
-		Caller:  e.Caller,
-		Context: ctx,
+// writeEntry 写入日志条目
+// writeEntry writes log entry
+func (l *standardLogger) writeEntry(entry *LogEntry) {
+	var data []byte
+	var err error
+
+	format := l.GetFormat()
+	if format == FormatJSON {
+		data, err = entry.ToJSON()
+		if err != nil {
+			data = []byte(fmt.Sprintf(`{"error":"failed to marshal log entry: %v"}`, err))
+		}
+		data = append(data, '\n')
+	} else {
+		data = []byte(entry.String() + "\n")
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if l.output != nil {
+		l.output.Write(data)
 	}
 }
 
-// ===== 日志钩子 Log Hooks =====
-
-// Hook 日志钩子接口
-// Hook log hook interface
-type Hook interface {
-	Levels() []Level
-	Fire(*Entry) error
+// Trace 输出跟踪级别日志
+// Trace outputs trace level log
+func (l *standardLogger) Trace(args ...interface{}) {
+	l.log(LevelTrace, args...)
 }
 
-// ===== 日志输出 Log Output =====
-
-// Output 日志输出接口
-// Output log output interface
-type Output interface {
-	Write(entry *Entry) error
-	Close() error
+// Tracef 输出格式化跟踪级别日志
+// Tracef outputs formatted trace level log
+func (l *standardLogger) Tracef(format string, args ...interface{}) {
+	l.logf(LevelTrace, format, args...)
 }
 
-// WriterOutput 基于 io.Writer 的输出
-// WriterOutput writer-based output
-type WriterOutput struct {
-	Writer    io.Writer
-	Formatter Formatter
-	mu        sync.Mutex
+// Debug 输出调试级别日志
+// Debug outputs debug level log
+func (l *standardLogger) Debug(args ...interface{}) {
+	l.log(LevelDebug, args...)
 }
 
-// Write 写入日志
-// Write writes log
-func (w *WriterOutput) Write(entry *Entry) error {
-	formatted, err := w.Formatter.Format(entry)
+// Debugf 输出格式化调试级别日志
+// Debugf outputs formatted debug level log
+func (l *standardLogger) Debugf(format string, args ...interface{}) {
+	l.logf(LevelDebug, format, args...)
+}
+
+// Info 输出信息级别日志
+// Info outputs info level log
+func (l *standardLogger) Info(args ...interface{}) {
+	l.log(LevelInfo, args...)
+}
+
+// Infof 输出格式化信息级别日志
+// Infof outputs formatted info level log
+func (l *standardLogger) Infof(format string, args ...interface{}) {
+	l.logf(LevelInfo, format, args...)
+}
+
+// Warn 输出警告级别日志
+// Warn outputs warning level log
+func (l *standardLogger) Warn(args ...interface{}) {
+	l.log(LevelWarn, args...)
+}
+
+// Warnf 输出格式化警告级别日志
+// Warnf outputs formatted warning level log
+func (l *standardLogger) Warnf(format string, args ...interface{}) {
+	l.logf(LevelWarn, format, args...)
+}
+
+// Error 输出错误级别日志
+// Error outputs error level log
+func (l *standardLogger) Error(args ...interface{}) {
+	l.log(LevelError, args...)
+}
+
+// Errorf 输出格式化错误级别日志
+// Errorf outputs formatted error level log
+func (l *standardLogger) Errorf(format string, args ...interface{}) {
+	l.logf(LevelError, format, args...)
+}
+
+// Fatal 输出致命错误级别日志并退出程序
+// Fatal outputs fatal level log and exits program
+func (l *standardLogger) Fatal(args ...interface{}) {
+	l.log(LevelFatal, args...)
+	l.Close()
+	os.Exit(1)
+}
+
+// Fatalf 输出格式化致命错误级别日志并退出程序
+// Fatalf outputs formatted fatal level log and exits program
+func (l *standardLogger) Fatalf(format string, args ...interface{}) {
+	l.logf(LevelFatal, format, args...)
+	l.Close()
+	os.Exit(1)
+}
+
+// Close 关闭日志器
+// Close closes the logger
+func (l *standardLogger) Close() error {
+	if l.async && l.done != nil {
+		close(l.done)
+		l.wg.Wait()
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if l.output != nil && l.output != os.Stdout && l.output != os.Stderr {
+		return l.output.Close()
+	}
+
+	return nil
+}
+
+// 工具函数 Utility functions
+
+// getCaller 获取调用者信息
+// getCaller gets caller information
+func getCaller(skip int) string {
+	_, file, line, ok := runtime.Caller(skip)
+	if !ok {
+		return ""
+	}
+
+	// 只保留文件名
+	// Keep only filename
+	file = filepath.Base(file)
+	return fmt.Sprintf("%s:%d", file, line)
+}
+
+// getStackTrace 获取堆栈跟踪
+// getStackTrace gets stack trace
+func getStackTrace(skip int) string {
+	const depth = 32
+	var pcs [depth]uintptr
+	n := runtime.Callers(skip, pcs[:])
+
+	var traces []string
+	for i := 0; i < n; i++ {
+		pc := pcs[i]
+		fn := runtime.FuncForPC(pc)
+		if fn == nil {
+			continue
+		}
+		file, line := fn.FileLine(pc)
+		traces = append(traces, fmt.Sprintf("%s:%d %s", filepath.Base(file), line, fn.Name()))
+	}
+
+	return strings.Join(traces, "\n")
+}
+
+// 上下文提取函数 Context extraction functions
+
+// getTraceIDFromContext 从上下文中获取跟踪ID
+// getTraceIDFromContext gets trace ID from context
+func getTraceIDFromContext(ctx context.Context) string {
+	if value := ctx.Value("trace_id"); value != nil {
+		if traceID, ok := value.(string); ok {
+			return traceID
+		}
+	}
+	return ""
+}
+
+// getSpanIDFromContext 从上下文中获取跨度ID
+// getSpanIDFromContext gets span ID from context
+func getSpanIDFromContext(ctx context.Context) string {
+	if value := ctx.Value("span_id"); value != nil {
+		if spanID, ok := value.(string); ok {
+			return spanID
+		}
+	}
+	return ""
+}
+
+// getUserIDFromContext 从上下文中获取用户ID
+// getUserIDFromContext gets user ID from context
+func getUserIDFromContext(ctx context.Context) string {
+	if value := ctx.Value("user_id"); value != nil {
+		if userID, ok := value.(string); ok {
+			return userID
+		}
+	}
+	return ""
+}
+
+// getRequestIDFromContext 从上下文中获取请求ID
+// getRequestIDFromContext gets request ID from context
+func getRequestIDFromContext(ctx context.Context) string {
+	if value := ctx.Value("request_id"); value != nil {
+		if requestID, ok := value.(string); ok {
+			return requestID
+		}
+	}
+	return ""
+}
+
+// 全局日志器 Global logger
+var (
+	globalLogger Logger
+	globalMu     sync.RWMutex
+)
+
+// InitGlobalLogger 初始化全局日志器
+// InitGlobalLogger initializes global logger
+func InitGlobalLogger(config *Config) error {
+	logger, err := NewLogger(config)
 	if err != nil {
 		return err
 	}
 
-	w.mu.Lock()
-	defer w.mu.Unlock()
+	globalMu.Lock()
+	defer globalMu.Unlock()
 
-	_, err = w.Writer.Write(formatted)
-	return err
-}
-
-// Close 关闭输出
-// Close closes output
-func (w *WriterOutput) Close() error {
-	if closer, ok := w.Writer.(io.Closer); ok {
-		return closer.Close()
+	if globalLogger != nil {
+		globalLogger.Close()
 	}
+
+	globalLogger = logger
 	return nil
 }
 
-// FileOutput 文件输出
-// FileOutput file output
-type FileOutput struct {
-	*WriterOutput
-	writer *lumberjack.Logger
-}
+// GetGlobalLogger 获取全局日志器
+// GetGlobalLogger gets global logger
+func GetGlobalLogger() Logger {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
 
-// NewFileOutput 创建文件输出
-// NewFileOutput creates file output
-func NewFileOutput(filename string, formatter Formatter, maxSize, maxBackups, maxAge int) *FileOutput {
-	writer := &lumberjack.Logger{
-		Filename:   filename,
-		MaxSize:    maxSize,    // megabytes
-		MaxBackups: maxBackups,
-		MaxAge:     maxAge, // days
-		Compress:   true,
+	if globalLogger == nil {
+		// 使用默认配置创建日志器
+		// Create logger with default config
+		logger, _ := NewLogger(DefaultConfig)
+		globalLogger = logger
 	}
 
-	return &FileOutput{
-		WriterOutput: &WriterOutput{
-			Writer:    writer,
-			Formatter: formatter,
-		},
-		writer: writer,
+	return globalLogger
+}
+
+// 全局日志函数 Global logging functions
+
+// Trace 输出跟踪级别日志
+// Trace outputs trace level log
+func Trace(args ...interface{}) {
+	GetGlobalLogger().WithCaller(1).Trace(args...)
+}
+
+// Tracef 输出格式化跟踪级别日志
+// Tracef outputs formatted trace level log
+func Tracef(format string, args ...interface{}) {
+	GetGlobalLogger().WithCaller(1).Tracef(format, args...)
+}
+
+// Debug 输出调试级别日志
+// Debug outputs debug level log
+func Debug(args ...interface{}) {
+	GetGlobalLogger().WithCaller(1).Debug(args...)
+}
+
+// Debugf 输出格式化调试级别日志
+// Debugf outputs formatted debug level log
+func Debugf(format string, args ...interface{}) {
+	GetGlobalLogger().WithCaller(1).Debugf(format, args...)
+}
+
+// Info 输出信息级别日志
+// Info outputs info level log
+func Info(args ...interface{}) {
+	GetGlobalLogger().WithCaller(1).Info(args...)
+}
+
+// Infof 输出格式化信息级别日志
+// Infof outputs formatted info level log
+func Infof(format string, args ...interface{}) {
+	GetGlobalLogger().WithCaller(1).Infof(format, args...)
+}
+
+// Warn 输出警告级别日志
+// Warn outputs warning level log
+func Warn(args ...interface{}) {
+	GetGlobalLogger().WithCaller(1).Warn(args...)
+}
+
+// Warnf 输出格式化警告级别日志
+// Warnf outputs formatted warning level log
+func Warnf(format string, args ...interface{}) {
+	GetGlobalLogger().WithCaller(1).Warnf(format, args...)
+}
+
+// Error 输出错误级别日志
+// Error outputs error level log
+func Error(args ...interface{}) {
+	GetGlobalLogger().WithCaller(1).Error(args...)
+}
+
+// Errorf 输出格式化错误级别日志
+// Errorf outputs formatted error level log
+func Errorf(format string, args ...interface{}) {
+	GetGlobalLogger().WithCaller(1).Errorf(format, args...)
+}
+
+// Fatal 输出致命错误级别日志并退出程序
+// Fatal outputs fatal level log and exits program
+func Fatal(args ...interface{}) {
+	GetGlobalLogger().WithCaller(1).Fatal(args...)
+}
+
+// Fatalf 输出格式化致命错误级别日志并退出程序
+// Fatalf outputs formatted fatal level log and exits program
+func Fatalf(format string, args ...interface{}) {
+	GetGlobalLogger().WithCaller(1).Fatalf(format, args...)
+}
+
+// WithField 添加单个字段
+// WithField adds single field
+func WithField(key string, value interface{}) Logger {
+	return GetGlobalLogger().WithField(key, value)
+}
+
+// WithFields 添加多个字段
+// WithFields adds multiple fields
+func WithFields(fields Fields) Logger {
+	return GetGlobalLogger().WithFields(fields)
+}
+
+// WithContext 从上下文中提取字段
+// WithContext extracts fields from context
+func WithContext(ctx context.Context) Logger {
+	return GetGlobalLogger().WithContext(ctx)
+}
+
+// WithCaller 添加调用者信息
+// WithCaller adds caller information
+func WithCaller(skip int) Logger {
+	return GetGlobalLogger().WithCaller(skip + 1)
+}
+
+// SetLevel 设置全局日志级别
+// SetLevel sets global log level
+func SetLevel(level LogLevel) {
+	GetGlobalLogger().SetLevel(level)
+}
+
+// GetLevel 获取全局日志级别
+// GetLevel gets global log level
+func GetLevel() LogLevel {
+	return GetGlobalLogger().GetLevel()
+}
+
+// SetFormat 设置全局日志格式
+// SetFormat sets global log format
+func SetFormat(format LogFormat) {
+	GetGlobalLogger().SetFormat(format)
+}
+
+// GetFormat 获取全局日志格式
+// GetFormat gets global log format
+func GetFormat() LogFormat {
+	return GetGlobalLogger().GetFormat()
+}
+
+// 轮转日志实现 Rotating log implementation
+
+// rotatingWriter 轮转写入器
+// rotatingWriter rotating writer
+type rotatingWriter struct {
+	mu        sync.Mutex
+	filename  string
+	file      *os.File
+	config    *RotateConfig
+	size      int64
+	backupNum int
+}
+
+// NewRotatingWriter 创建轮转写入器
+// NewRotatingWriter creates rotating writer
+func NewRotatingWriter(filename string, config *RotateConfig) (io.WriteCloser, error) {
+	if config == nil {
+		config = DefaultRotateConfig
 	}
-}
 
-// ===== 异步写入器 Async Writer =====
-
-// AsyncOutput 异步输出
-// AsyncOutput async output
-type AsyncOutput struct {
-	output    Output
-	entries   chan *Entry
-	done      chan struct{}
-	wg        sync.WaitGroup
-	bufferLen int
-}
-
-// NewAsyncOutput 创建异步输出
-// NewAsyncOutput creates async output
-func NewAsyncOutput(output Output, bufferLen int) *AsyncOutput {
-	a := &AsyncOutput{
-		output:    output,
-		entries:   make(chan *Entry, bufferLen),
-		done:      make(chan struct{}),
-		bufferLen: bufferLen,
+	// 确保目录存在
+	// Ensure directory exists
+	dir := filepath.Dir(filename)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, errors.WrapError(errors.ErrCodeSystemFailure, "Failed to create log directory", err)
 	}
 
-	a.wg.Add(1)
-	go a.run()
-
-	return a
-}
-
-// Write 异步写入日志
-// Write writes log asynchronously
-func (a *AsyncOutput) Write(entry *Entry) error {
-	select {
-	case a.entries <- entry:
-		return nil
-	default:
-		// 缓冲区满，丢弃日志
-		return fmt.Errorf("async buffer full")
+	writer := &rotatingWriter{
+		filename: filename,
+		config:   config,
 	}
+
+	if err := writer.openFile(); err != nil {
+		return nil, err
+	}
+
+	return writer, nil
 }
 
-// Close 关闭异步输出
-// Close closes async output
-func (a *AsyncOutput) Close() error {
-	close(a.done)
-	a.wg.Wait()
-	close(a.entries)
-	return a.output.Close()
+// openFile 打开文件
+// openFile opens file
+func (w *rotatingWriter) openFile() error {
+	info, err := os.Stat(w.filename)
+	if err == nil {
+		w.size = info.Size()
+	}
+
+	file, err := os.OpenFile(w.filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return errors.WrapError(errors.ErrCodeSystemFailure, "Failed to open log file", err)
+	}
+
+	w.file = file
+	return nil
 }
 
-// run 运行异步写入循环
-// run runs async write loop
-func (a *AsyncOutput) run() {
-	defer a.wg.Done()
+// Write 写入数据
+// Write writes data
+func (w *rotatingWriter) Write(p []byte) (n int, err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 
-	for {
-		select {
-		case entry := <-a.entries:
-			if entry != nil {
-				_ = a.output.Write(entry)
+	writeLen := int64(len(p))
+
+	// 检查是否需要轮转
+	// Check if rotation needed
+	if w.size+writeLen > int64(w.config.MaxSize)*1024*1024 {
+		if err := w.rotate(); err != nil {
+			return 0, err
+		}
+	}
+
+	n, err = w.file.Write(p)
+	w.size += int64(n)
+
+	return n, err
+}
+
+// rotate 执行轮转
+// rotate performs rotation
+func (w *rotatingWriter) rotate() error {
+	if w.file != nil {
+		w.file.Close()
+	}
+
+	// 重命名现有文件
+	// Rename existing files
+	for i := w.config.MaxBackups; i > 0; i-- {
+		oldName := fmt.Sprintf("%s.%d", w.filename, i)
+		newName := fmt.Sprintf("%s.%d", w.filename, i+1)
+
+		if i == w.config.MaxBackups {
+			// 删除最老的文件
+			// Remove oldest file
+			os.Remove(oldName)
+		} else {
+			// 重命名文件
+			// Rename file
+			if _, err := os.Stat(oldName); err == nil {
+				os.Rename(oldName, newName)
 			}
-		case <-a.done:
-			// 处理剩余的日志
-			for entry := range a.entries {
-				if entry != nil {
-					_ = a.output.Write(entry)
-				}
-			}
-			return
+		}
+	}
+
+	// 将当前文件重命名为.1
+	// Rename current file to .1
+	backupName := fmt.Sprintf("%s.1", w.filename)
+	if err := os.Rename(w.filename, backupName); err != nil {
+		return errors.WrapError(errors.ErrCodeSystemFailure, "Failed to rotate log file", err)
+	}
+
+	// 压缩备份文件
+	// Compress backup file
+	if w.config.Compress {
+		go w.compressFile(backupName)
+	}
+
+	// 清理过期文件
+	// Clean up expired files
+	go w.cleanupOldFiles()
+
+	// 重新打开文件
+	// Reopen file
+	w.size = 0
+	return w.openFile()
+}
+
+// compressFile 压缩文件
+// compressFile compresses file
+func (w *rotatingWriter) compressFile(filename string) {
+	// 这里可以实现文件压缩逻辑
+	// File compression logic can be implemented here
+	// 为了简化，这里只是一个占位符
+	// This is just a placeholder for simplification
+}
+
+// cleanupOldFiles 清理过期文件
+// cleanupOldFiles cleans up expired files
+func (w *rotatingWriter) cleanupOldFiles() {
+	if w.config.MaxAge <= 0 {
+		return
+	}
+
+	cutoff := time.Now().AddDate(0, 0, -w.config.MaxAge)
+
+	dir := filepath.Dir(w.filename)
+	base := filepath.Base(w.filename)
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		name := entry.Name()
+		if !strings.HasPrefix(name, base+".") {
+			continue
+		}
+
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+
+		if info.ModTime().Before(cutoff) {
+			os.Remove(filepath.Join(dir, name))
 		}
 	}
 }
 
-// ===== 日志记录器 Logger =====
+// Close 关闭写入器
+// Close closes writer
+func (w *rotatingWriter) Close() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 
-// Logger 日志记录器
-// Logger log recorder
-type Logger struct {
-	outputs      []Output
-	hooks        []Hook
-	level        int32 // atomic
-	reportCaller bool
-	mu           sync.RWMutex
-	fields       Fields
-	exitFunc     func(int)
+	if w.file != nil {
+		return w.file.Close()
+	}
+
+	return nil
 }
 
-// New 创建新的日志记录器
-// New creates new logger
-func New() *Logger {
-	return &Logger{
-		outputs:  make([]Output, 0),
-		hooks:    make([]Hook, 0),
-		level:    int32(InfoLevel),
-		fields:   make(Fields),
-		exitFunc: os.Exit,
+// 多输出日志器 Multi-output logger
+
+// multiLogger 多输出日志器
+// multiLogger multi-output logger
+type multiLogger struct {
+	loggers []Logger
+}
+
+// NewMultiLogger 创建多输出日志器
+// NewMultiLogger creates multi-output logger
+func NewMultiLogger(loggers ...Logger) Logger {
+	return &multiLogger{
+		loggers: loggers,
 	}
 }
 
 // SetLevel 设置日志级别
 // SetLevel sets log level
-func (l *Logger) SetLevel(level Level) {
-	atomic.StoreInt32(&l.level, int32(level))
+func (m *multiLogger) SetLevel(level LogLevel) {
+	for _, logger := range m.loggers {
+		logger.SetLevel(level)
+	}
 }
 
 // GetLevel 获取日志级别
 // GetLevel gets log level
-func (l *Logger) GetLevel() Level {
-	return Level(atomic.LoadInt32(&l.level))
-}
-
-// SetReportCaller 设置是否报告调用者
-// SetReportCaller sets whether to report caller
-func (l *Logger) SetReportCaller(report bool) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.reportCaller = report
-}
-
-// AddOutput 添加输出
-// AddOutput adds output
-func (l *Logger) AddOutput(output Output) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.outputs = append(l.outputs, output)
-}
-
-// AddHook 添加钩子
-// AddHook adds hook
-func (l *Logger) AddHook(hook Hook) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.hooks = append(l.hooks, hook)
-}
-
-// WithField 创建带字段的条目
-// WithField creates entry with field
-func (l *Logger) WithField(key string, value interface{}) *Entry {
-	return l.newEntry().WithField(key, value)
-}
-
-// WithFields 创建带多个字段的条目
-// WithFields creates entry with fields
-func (l *Logger) WithFields(fields Fields) *Entry {
-	return l.newEntry().WithFields(fields)
-}
-
-// WithContext 创建带上下文的条目
-// WithContext creates entry with context
-func (l *Logger) WithContext(ctx context.Context) *Entry {
-	return l.newEntry().WithContext(ctx)
-}
-
-// newEntry 创建新条目
-// newEntry creates new entry
-func (l *Logger) newEntry() *Entry {
-	entry := &Entry{
-		Logger: l,
-		Time:   time.Now(),
-		Fields: make(Fields, len(l.fields)),
+func (m *multiLogger) GetLevel() LogLevel {
+	if len(m.loggers) > 0 {
+		return m.loggers[0].GetLevel()
 	}
-
-	// 复制全局字段
-	l.mu.RLock()
-	for k, v := range l.fields {
-		entry.Fields[k] = v
-	}
-	l.mu.RUnlock()
-
-	return entry
+	return LevelInfo
 }
 
-// log 记录日志
-// log logs message
-func (l *Logger) log(level Level, args ...interface{}) {
-	if level < l.GetLevel() {
-		return
-	}
-
-	entry := l.newEntry()
-	entry.Level = level
-	entry.Message = fmt.Sprint(args...)
-
-	// 获取调用者信息
-	if l.reportCaller {
-		entry.Caller = getCaller()
-	}
-
-	// 触发钩子
-	l.fireHooks(entry)
-
-	// 写入输出
-	l.write(entry)
-
-	// 处理 Fatal 和 Panic
-	if level == FatalLevel {
-		l.exitFunc(1)
-	} else if level == PanicLevel {
-		panic(entry.Message)
+// SetFormat 设置日志格式
+// SetFormat sets log format
+func (m *multiLogger) SetFormat(format LogFormat) {
+	for _, logger := range m.loggers {
+		logger.SetFormat(format)
 	}
 }
 
-// logf 记录格式化日志
-// logf logs formatted message
-func (l *Logger) logf(level Level, format string, args ...interface{}) {
-	if level < l.GetLevel() {
-		return
+// GetFormat 获取日志格式
+// GetFormat gets log format
+func (m *multiLogger) GetFormat() LogFormat {
+	if len(m.loggers) > 0 {
+		return m.loggers[0].GetFormat()
 	}
+	return FormatText
+}
 
-	entry := l.newEntry()
-	entry.Level = level
-	entry.Message = fmt.Sprintf(format, args...)
-
-	// 获取调用者信息
-	if l.reportCaller {
-		entry.Caller = getCaller()
+// WithField 添加单个字段
+// WithField adds single field
+func (m *multiLogger) WithField(key string, value interface{}) Logger {
+	loggers := make([]Logger, len(m.loggers))
+	for i, logger := range m.loggers {
+		loggers[i] = logger.WithField(key, value)
 	}
+	return &multiLogger{loggers: loggers}
+}
 
-	// 触发钩子
-	l.fireHooks(entry)
+// WithFields 添加多个字段
+// WithFields adds multiple fields
+func (m *multiLogger) WithFields(fields Fields) Logger {
+	loggers := make([]Logger, len(m.loggers))
+	for i, logger := range m.loggers {
+		loggers[i] = logger.WithFields(fields)
+	}
+	return &multiLogger{loggers: loggers}
+}
 
-	// 写入输出
-	l.write(entry)
+// WithContext 从上下文中提取字段
+// WithContext extracts fields from context
+func (m *multiLogger) WithContext(ctx context.Context) Logger {
+	loggers := make([]Logger, len(m.loggers))
+	for i, logger := range m.loggers {
+		loggers[i] = logger.WithContext(ctx)
+	}
+	return &multiLogger{loggers: loggers}
+}
 
-	// 处理 Fatal 和 Panic
-	if level == FatalLevel {
-		l.exitFunc(1)
-	} else if level == PanicLevel {
-		panic(entry.Message)
+// WithCaller 添加调用者信息
+// WithCaller adds caller information
+func (m *multiLogger) WithCaller(skip int) Logger {
+	loggers := make([]Logger, len(m.loggers))
+	for i, logger := range m.loggers {
+		loggers[i] = logger.WithCaller(skip)
+	}
+	return &multiLogger{loggers: loggers}
+}
+
+// Trace 输出跟踪级别日志
+// Trace outputs trace level log
+func (m *multiLogger) Trace(args ...interface{}) {
+	for _, logger := range m.loggers {
+		logger.Trace(args...)
 	}
 }
 
-// fireHooks 触发钩子
-// fireHooks fires hooks
-func (l *Logger) fireHooks(entry *Entry) {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
+// Tracef 输出格式化跟踪级别日志
+// Tracef outputs formatted trace level log
+func (m *multiLogger) Tracef(format string, args ...interface{}) {
+	for _, logger := range m.loggers {
+		logger.Tracef(format, args...)
+	}
+}
 
-	for _, hook := range l.hooks {
-		for _, level := range hook.Levels() {
-			if level == entry.Level {
-				if err := hook.Fire(entry); err != nil {
-					fmt.Fprintf(os.Stderr, "Failed to fire hook: %v\n", err)
-				}
-				break
-			}
+// Debug 输出调试级别日志
+// Debug outputs debug level log
+func (m *multiLogger) Debug(args ...interface{}) {
+	for _, logger := range m.loggers {
+		logger.Debug(args...)
+	}
+}
+
+// Debugf 输出格式化调试级别日志
+// Debugf outputs formatted debug level log
+func (m *multiLogger) Debugf(format string, args ...interface{}) {
+	for _, logger := range m.loggers {
+		logger.Debugf(format, args...)
+	}
+}
+
+// Info 输出信息级别日志
+// Info outputs info level log
+func (m *multiLogger) Info(args ...interface{}) {
+	for _, logger := range m.loggers {
+		logger.Info(args...)
+	}
+}
+
+// Infof 输出格式化信息级别日志
+// Infof outputs formatted info level log
+func (m *multiLogger) Infof(format string, args ...interface{}) {
+	for _, logger := range m.loggers {
+		logger.Infof(format, args...)
+	}
+}
+
+// Warn 输出警告级别日志
+// Warn outputs warning level log
+func (m *multiLogger) Warn(args ...interface{}) {
+	for _, logger := range m.loggers {
+		logger.Warn(args...)
+	}
+}
+
+// Warnf 输出格式化警告级别日志
+// Warnf outputs formatted warning level log
+func (m *multiLogger) Warnf(format string, args ...interface{}) {
+	for _, logger := range m.loggers {
+		logger.Warnf(format, args...)
+	}
+}
+
+// Error 输出错误级别日志
+// Error outputs error level log
+func (m *multiLogger) Error(args ...interface{}) {
+	for _, logger := range m.loggers {
+		logger.Error(args...)
+	}
+}
+
+// Errorf 输出格式化错误级别日志
+// Errorf outputs formatted error level log
+func (m *multiLogger) Errorf(format string, args ...interface{}) {
+	for _, logger := range m.loggers {
+		logger.Errorf(format, args...)
+	}
+}
+
+// Fatal 输出致命错误级别日志并退出程序
+// Fatal outputs fatal level log and exits program
+func (m *multiLogger) Fatal(args ...interface{}) {
+	for _, logger := range m.loggers {
+		logger.Fatal(args...)
+	}
+}
+
+// Fatalf 输出格式化致命错误级别日志并退出程序
+// Fatalf outputs formatted fatal level log and exits program
+func (m *multiLogger) Fatalf(format string, args ...interface{}) {
+	for _, logger := range m.loggers {
+		logger.Fatalf(format, args...)
+	}
+}
+
+// Close 关闭日志器
+// Close closes the logger
+func (m *multiLogger) Close() error {
+	var lastErr error
+	for _, logger := range m.loggers {
+		if err := logger.Close(); err != nil {
+			lastErr = err
 		}
 	}
+	return lastErr
 }
 
-// write 写入输出
-// write writes to outputs
-func (l *Logger) write(entry *Entry) {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
+// 性能监控日志器 Performance monitoring logger
 
-	for _, output := range l.outputs {
-		if err := output.Write(entry); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to write log: %v\n", err)
-		}
+// PerfLogger 性能日志器
+// PerfLogger performance logger
+type PerfLogger struct {
+	Logger
+	slowThreshold time.Duration
+}
+
+// NewPerfLogger 创建性能日志器
+// NewPerfLogger creates performance logger
+func NewPerfLogger(logger Logger, slowThreshold time.Duration) *PerfLogger {
+	return &PerfLogger{
+		Logger:        logger,
+		slowThreshold: slowThreshold,
 	}
 }
 
-// Debug 记录调试日志
-// Debug logs debug message
-func (l *Logger) Debug(args ...interface{}) {
-	l.log(DebugLevel, args...)
-}
+// LogDuration 记录执行时长
+// LogDuration logs execution duration
+func (p *PerfLogger) LogDuration(operation string, start time.Time, fields ...Fields) {
+	duration := time.Since(start)
 
-// Debugf 记录格式化调试日志
-// Debugf logs formatted debug message
-func (l *Logger) Debugf(format string, args ...interface{}) {
-	l.logf(DebugLevel, format, args...)
-}
-
-// Info 记录信息日志
-// Info logs info message
-func (l *Logger) Info(args ...interface{}) {
-	l.log(InfoLevel, args...)
-}
-
-// Infof 记录格式化信息日志
-// Infof logs formatted info message
-func (l *Logger) Infof(format string, args ...interface{}) {
-	l.logf(InfoLevel, format, args...)
-}
-
-// Warn 记录警告日志
-// Warn logs warning message
-func (l *Logger) Warn(args ...interface{}) {
-	l.log(WarnLevel, args...)
-}
-
-// Warnf 记录格式化警告日志
-// Warnf logs formatted warning message
-func (l *Logger) Warnf(format string, args ...interface{}) {
-	l.logf(WarnLevel, format, args...)
-}
-
-// Error 记录错误日志
-// Error logs error message
-func (l *Logger) Error(args ...interface{}) {
-	l.log(ErrorLevel, args...)
-}
-
-// Errorf 记录格式化错误日志
-// Errorf logs formatted error message
-func (l *Logger) Errorf(format string, args ...interface{}) {
-	l.logf(ErrorLevel, format, args...)
-}
-
-// Fatal 记录致命错误日志并退出
-// Fatal logs fatal message and exits
-func (l *Logger) Fatal(args ...interface{}) {
-	l.log(FatalLevel, args...)
-}
-
-// Fatalf 记录格式化致命错误日志并退出
-// Fatalf logs formatted fatal message and exits
-func (l *Logger) Fatalf(format string, args ...interface{}) {
-	l.logf(FatalLevel, format, args...)
-}
-
-// Panic 记录恐慌日志并触发panic
-// Panic logs panic message and panics
-func (l *Logger) Panic(args ...interface{}) {
-	l.log(PanicLevel, args...)
-}
-
-// Panicf 记录格式化恐慌日志并触发panic
-// Panicf logs formatted panic message and panics
-func (l *Logger) Panicf(format string, args ...interface{}) {
-	l.logf(PanicLevel, format, args...)
-}
-
-// ===== 辅助函数 Helper Functions =====
-
-// getCaller 获取调用者信息
-// getCaller gets caller information
-func getCaller() string {
-	_, file, line, ok := runtime.Caller(4)
-	if !ok {
-		return ""
-	}
-	return fmt.Sprintf("%s:%d", filepath.Base(file), line)
-}
-
-// ===== 默认日志记录器 Default Logger =====
-
-var defaultLogger = New()
-
-func init() {
-	// 设置默认输出为标准输出
-	defaultLogger.AddOutput(&WriterOutput{
-		Writer: os.Stdout,
-		Formatter: &TextFormatter{
-			FullTimestamp: true,
-		},
-	})
-}
-
-// SetDefaultLogger 设置默认日志记录器
-// SetDefaultLogger sets default logger
-func SetDefaultLogger(logger *Logger) {
-	defaultLogger = logger
-}
-
-// GetDefaultLogger 获取默认日志记录器
-// GetDefaultLogger gets default logger
-func GetDefaultLogger() *Logger {
-	return defaultLogger
-}
-
-// ===== 包级别函数 Package Level Functions =====
-
-// SetLevel 设置默认日志级别
-// SetLevel sets default log level
-func SetLevel(level Level) {
-	defaultLogger.SetLevel(level)
-}
-
-// GetLevel 获取默认日志级别
-// GetLevel gets default log level
-func GetLevel() Level {
-	return defaultLogger.GetLevel()
-}
-
-// WithField 创建带字段的条目
-// WithField creates entry with field
-func WithField(key string, value interface{}) *Entry {
-	return defaultLogger.WithField(key, value)
-}
-
-// WithFields 创建带多个字段的条目
-// WithFields creates entry with fields
-func WithFields(fields Fields) *Entry {
-	return defaultLogger.WithFields(fields)
-}
-
-// WithContext 创建带上下文的条目
-// WithContext creates entry with context
-func WithContext(ctx context.Context) *Entry {
-	return defaultLogger.WithContext(ctx)
-}
-
-// Debug 记录调试日志
-// Debug logs debug message
-func Debug(args ...interface{}) {
-	defaultLogger.Debug(args...)
-}
-
-// Debugf 记录格式化调试日志
-// Debugf logs formatted debug message
-func Debugf(format string, args ...interface{}) {
-	defaultLogger.Debugf(format, args...)
-}
-
-// Info 记录信息日志
-// Info logs info message
-func Info(args ...interface{}) {
-	defaultLogger.Info(args...)
-}
-
-// Infof 记录格式化信息日志
-// Infof logs formatted info message
-func Infof(format string, args ...interface{}) {
-	defaultLogger.Infof(format, args...)
-}
-
-// Warn 记录警告日志
-// Warn logs warning message
-func Warn(args ...interface{}) {
-	defaultLogger.Warn(args...)
-}
-
-// Warnf 记录格式化警告日志
-// Warnf logs formatted warning message
-func Warnf(format string, args ...interface{}) {
-	defaultLogger.Warnf(format, args...)
-}
-
-// Error 记录错误日志
-// Error logs error message
-func Error(args ...interface{}) {
-	defaultLogger.Error(args...)
-}
-
-// Errorf 记录格式化错误日志
-// Errorf logs formatted error message
-func Errorf(format string, args ...interface{}) {
-	defaultLogger.Errorf(format, args...)
-}
-
-// Fatal 记录致命错误日志并退出
-// Fatal logs fatal message and exits
-func Fatal(args ...interface{}) {
-	defaultLogger.Fatal(args...)
-}
-
-// Fatalf 记录格式化致命错误日志并退出
-// Fatalf logs formatted fatal message and exits
-func Fatalf(format string, args ...interface{}) {
-	defaultLogger.Fatalf(format, args...)
-}
-
-// Panic 记录恐慌日志并触发panic
-// Panic logs panic message and panics
-func Panic(args ...interface{}) {
-	defaultLogger.Panic(args...)
-}
-
-// Panicf 记录格式化恐慌日志并触发panic
-// Panicf logs formatted panic message and panics
-func Panicf(format string, args ...interface{}) {
-	defaultLogger.Panicf(format, args...)
-}
-
-// ===== 特定场景的日志函数 Scenario-specific Log Functions =====
-
-// SQL 记录SQL查询日志
-// SQL logs SQL query
-func SQL(query string, duration time.Duration, err error) {
-	entry := WithFields(Fields{
-		"query":    query,
-		"duration": duration.String(),
-	})
-
-	if err != nil {
-		entry.WithField("error", err.Error()).Error("SQL query failed")
-	} else {
-		entry.Info("SQL query executed")
-	}
-}
-
-// Transaction 记录事务日志
-// Transaction logs transaction
-func Transaction(txID string, action string, err error) {
-	entry := WithFields(Fields{
-		"tx_id":  txID,
-		"action": action,
-	})
-
-	if err != nil {
-		entry.WithField("error", err.Error()).Error("Transaction failed")
-	} else {
-		entry.Info("Transaction completed")
-	}
-}
-
-// Access 记录访问日志
-// Access logs access
-func Access(method, path string, statusCode int, duration time.Duration) {
-	WithFields(Fields{
-		"method":      method,
-		"path":        path,
-		"status_code": statusCode,
+	logFields := Fields{
+		"operation":   operation,
 		"duration":    duration.String(),
-	}).Info("Access log")
-}
-
-// Performance 记录性能日志
-// Performance logs performance
-func Performance(operation string, duration time.Duration, details Fields) {
-	fields := Fields{
-		"operation": operation,
-		"duration":  duration.String(),
-	}
-	for k, v := range details {
-		fields[k] = v
-	}
-	WithFields(fields).Debug("Performance log")
-}
-
-// ===== 配置辅助函数 Configuration Helper Functions =====
-
-// ConfigureFromEnv 从环境变量配置日志
-// ConfigureFromEnv configures logger from environment variables
-func ConfigureFromEnv() error {
-	// 日志级别
-	if levelStr := os.Getenv("GUOCEDB_LOG_LEVEL"); levelStr != "" {
-		level, err := ParseLevel(levelStr)
-		if err != nil {
-			return err
-		}
-		SetLevel(level)
+		"duration_ms": duration.Milliseconds(),
 	}
 
-	// 日志格式
-	if format := os.Getenv("GUOCEDB_LOG_FORMAT"); format != "" {
-		var formatter Formatter
-		switch format {
-		case "json":
-			formatter = &JSONFormatter{}
-		case "text":
-			formatter = &TextFormatter{FullTimestamp: true}
-		default:
-			return fmt.Errorf("unknown log format: %s", format)
-		}
-
-		// 重新配置输出
-		defaultLogger.outputs = []Output{
-			&WriterOutput{
-				Writer:    os.Stdout,
-				Formatter: formatter,
-			},
+	// 合并额外字段
+	// Merge additional fields
+	for _, f := range fields {
+		for k, v := range f {
+			logFields[k] = v
 		}
 	}
 
-	// 日志文件
-	if logFile := os.Getenv("GUOCEDB_LOG_FILE"); logFile != "" {
-		fileOutput := NewFileOutput(
-			logFile,
-			&JSONFormatter{},
-			100, // 100MB
-			7,   // 7 backups
-			30,  // 30 days
-		)
-		defaultLogger.AddOutput(fileOutput)
-	}
+	logger := p.WithFields(logFields)
 
-	// 是否报告调用者
-	if reportCaller := os.Getenv("GUOCEDB_LOG_CALLER"); reportCaller == "true" {
-		defaultLogger.SetReportCaller(true)
+	if duration > p.slowThreshold {
+		logger.Warn("Slow operation detected")
+	} else {
+		logger.Debug("Operation completed")
 	}
-
-	return nil
 }
 
-// ===== 性能优化的日志池 Performance-optimized Log Pool =====
+// Cleanup 清理函数
+// Cleanup cleanup function
+func Cleanup() {
+	globalMu.Lock()
+	defer globalMu.Unlock()
 
-var entryPool = sync.Pool{
-	New: func() interface{} {
-		return &Entry{
-			Fields: make(Fields),
+	if globalLogger != nil {
+		globalLogger.Close()
+		globalLogger = nil
+	}
+}
+
+// init 初始化函数
+// init initialization function
+func init() {
+	// 创建默认全局日志器
+	// Create default global logger
+	if err := InitGlobalLogger(DefaultConfig); err != nil {
+		// 如果创建失败，使用标准输出
+		// If creation fails, use stdout
+		config := &Config{
+			Level:  LevelInfo,
+			Format: FormatText,
+			Output: "stdout",
+			Async:  false,
 		}
-	},
-}
-
-// getPooledEntry 从池中获取条目
-// getPooledEntry gets entry from pool
-func getPooledEntry() *Entry {
-	entry := entryPool.Get().(*Entry)
-	entry.Time = time.Now()
-	return entry
-}
-
-// putPooledEntry 将条目放回池中
-// putPooledEntry puts entry back to pool
-func putPooledEntry(entry *Entry) {
-	// 清理条目
-	entry.Logger = nil
-	entry.Level = 0
-	entry.Message = ""
-	entry.Caller = ""
-	entry.Context = nil
-
-	// 清理字段
-	for k := range entry.Fields {
-		delete(entry.Fields, k)
+		InitGlobalLogger(config)
 	}
-
-	entryPool.Put(entry)
 }
-
-// 需要导入的包（在实际文件中应该在顶部）
-// import (
-// 	"encoding/json"
-// )
-import "encoding/json"

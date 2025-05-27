@@ -1,4 +1,4 @@
-module github.com/guocedb/guocedb
+module github.com/turtacn/guocedb
 
 go 1.20
 

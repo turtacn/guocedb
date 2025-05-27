@@ -1,5 +1,5 @@
-// Package value 提供了 GuoceDB 的值系统实现
-// Package value provides value system implementation for GuoceDB
+// Package value 定义GuoceDB的SQL值类型系统
+// Package value defines SQL value type system for GuoceDB
 package value
 
 import (
@@ -8,1871 +8,1532 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"math/big"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
-	"github.com/guocedb/guocedb/common/errors"
-	"github.com/guocedb/guocedb/common/types/enum"
+	"github.com/turtacn/guocedb/common/constants"
+	"github.com/turtacn/guocedb/common/errors"
 )
 
-// ===== 值结构体定义 Value Structure Definition =====
-
-// Value 表示数据库中的一个值
-// Value represents a value in database
-type Value struct {
-	Type      enum.DataType // 数据类型 Data type
-	IsNull    bool          // 是否为NULL Is NULL
-	Val       interface{}   // 实际值 Actual value
-	Collation string        // 字符集排序规则 Collation
-}
-
-// ===== 构造函数 Constructors =====
-
-// NewNull 创建NULL值
-// NewNull creates NULL value
-func NewNull() *Value {
-	return &Value{
-		Type:   enum.TypeUnknown,
-		IsNull: true,
-		Val:    nil,
-	}
-}
-
-// NewBool 创建布尔值
-// NewBool creates boolean value
-func NewBool(v bool) *Value {
-	return &Value{
-		Type:   enum.TypeBool,
-		IsNull: false,
-		Val:    v,
-	}
-}
-
-// NewInt8 创建TINYINT值
-// NewInt8 creates TINYINT value
-func NewInt8(v int8) *Value {
-	return &Value{
-		Type:   enum.TypeTinyInt,
-		IsNull: false,
-		Val:    v,
-	}
-}
-
-// NewInt16 创建SMALLINT值
-// NewInt16 creates SMALLINT value
-func NewInt16(v int16) *Value {
-	return &Value{
-		Type:   enum.TypeSmallInt,
-		IsNull: false,
-		Val:    v,
-	}
-}
-
-// NewInt32 创建INT值
-// NewInt32 creates INT value
-func NewInt32(v int32) *Value {
-	return &Value{
-		Type:   enum.TypeInt,
-		IsNull: false,
-		Val:    v,
-	}
-}
-
-// NewInt64 创建BIGINT值
-// NewInt64 creates BIGINT value
-func NewInt64(v int64) *Value {
-	return &Value{
-		Type:   enum.TypeBigInt,
-		IsNull: false,
-		Val:    v,
-	}
-}
-
-// NewFloat32 创建FLOAT值
-// NewFloat32 creates FLOAT value
-func NewFloat32(v float32) *Value {
-	return &Value{
-		Type:   enum.TypeFloat,
-		IsNull: false,
-		Val:    v,
-	}
-}
-
-// NewFloat64 创建DOUBLE值
-// NewFloat64 creates DOUBLE value
-func NewFloat64(v float64) *Value {
-	return &Value{
-		Type:   enum.TypeDouble,
-		IsNull: false,
-		Val:    v,
-	}
-}
-
-// NewDecimal 创建DECIMAL值
-// NewDecimal creates DECIMAL value
-func NewDecimal(v *big.Float) *Value {
-	return &Value{
-		Type:   enum.TypeDecimal,
-		IsNull: false,
-		Val:    v,
-	}
-}
-
-// NewString 创建字符串值
-// NewString creates string value
-func NewString(v string) *Value {
-	return &Value{
-		Type:      enum.TypeVarchar,
-		IsNull:    false,
-		Val:       v,
-		Collation: "utf8mb4_general_ci",
-	}
-}
-
-// NewStringWithType 创建指定类型的字符串值
-// NewStringWithType creates string value with specified type
-func NewStringWithType(v string, t enum.DataType) *Value {
-	return &Value{
-		Type:      t,
-		IsNull:    false,
-		Val:       v,
-		Collation: "utf8mb4_general_ci",
-	}
-}
-
-// NewBytes 创建二进制值
-// NewBytes creates binary value
-func NewBytes(v []byte) *Value {
-	return &Value{
-		Type:   enum.TypeVarBinary,
-		IsNull: false,
-		Val:    v,
-	}
-}
-
-// NewBytesWithType 创建指定类型的二进制值
-// NewBytesWithType creates binary value with specified type
-func NewBytesWithType(v []byte, t enum.DataType) *Value {
-	return &Value{
-		Type:   t,
-		IsNull: false,
-		Val:    v,
-	}
-}
-
-// NewDate 创建DATE值
-// NewDate creates DATE value
-func NewDate(v time.Time) *Value {
-	return &Value{
-		Type:   enum.TypeDate,
-		IsNull: false,
-		Val:    v.Truncate(24 * time.Hour),
-	}
-}
-
-// NewTime 创建TIME值
-// NewTime creates TIME value
-func NewTime(v time.Duration) *Value {
-	return &Value{
-		Type:   enum.TypeTime,
-		IsNull: false,
-		Val:    v,
-	}
-}
-
-// NewDateTime 创建DATETIME值
-// NewDateTime creates DATETIME value
-func NewDateTime(v time.Time) *Value {
-	return &Value{
-		Type:   enum.TypeDateTime,
-		IsNull: false,
-		Val:    v,
-	}
-}
-
-// NewTimestamp 创建TIMESTAMP值
-// NewTimestamp creates TIMESTAMP value
-func NewTimestamp(v time.Time) *Value {
-	return &Value{
-		Type:   enum.TypeTimestamp,
-		IsNull: false,
-		Val:    v.UTC(),
-	}
-}
-
-// NewJSON 创建JSON值
-// NewJSON creates JSON value
-func NewJSON(v interface{}) *Value {
-	return &Value{
-		Type:   enum.TypeJSON,
-		IsNull: false,
-		Val:    v,
-	}
-}
-
-// ===== 类型转换 Type Conversion =====
-
-// AsBool 转换为布尔值
-// AsBool converts to boolean
-func (v *Value) AsBool() (bool, error) {
-	if v.IsNull {
-		return false, errors.New(errors.ErrInvalidDataType, "cannot convert NULL to bool")
-	}
-
-	switch v.Type {
-	case enum.TypeBool:
-		return v.Val.(bool), nil
-	case enum.TypeTinyInt:
-		return v.Val.(int8) != 0, nil
-	case enum.TypeSmallInt:
-		return v.Val.(int16) != 0, nil
-	case enum.TypeInt:
-		return v.Val.(int32) != 0, nil
-	case enum.TypeBigInt:
-		return v.Val.(int64) != 0, nil
-	case enum.TypeFloat:
-		return v.Val.(float32) != 0, nil
-	case enum.TypeDouble:
-		return v.Val.(float64) != 0, nil
-	case enum.TypeChar, enum.TypeVarchar, enum.TypeText:
-		s := strings.ToLower(v.Val.(string))
-		return s == "true" || s == "1" || s == "yes" || s == "on", nil
-	default:
-		return false, errors.New(errors.ErrInvalidDataType,
-			"cannot convert %s to bool", v.Type)
-	}
-}
-
-// AsInt64 转换为64位整数
-// AsInt64 converts to 64-bit integer
-func (v *Value) AsInt64() (int64, error) {
-	if v.IsNull {
-		return 0, errors.New(errors.ErrInvalidDataType, "cannot convert NULL to int64")
-	}
-
-	switch v.Type {
-	case enum.TypeTinyInt:
-		return int64(v.Val.(int8)), nil
-	case enum.TypeSmallInt:
-		return int64(v.Val.(int16)), nil
-	case enum.TypeInt:
-		return int64(v.Val.(int32)), nil
-	case enum.TypeBigInt:
-		return v.Val.(int64), nil
-	case enum.TypeFloat:
-		return int64(v.Val.(float32)), nil
-	case enum.TypeDouble:
-		return int64(v.Val.(float64)), nil
-	case enum.TypeDecimal:
-		i, _ := v.Val.(*big.Float).Int64()
-		return i, nil
-	case enum.TypeBool:
-		if v.Val.(bool) {
-			return 1, nil
-		}
-		return 0, nil
-	case enum.TypeChar, enum.TypeVarchar, enum.TypeText:
-		return strconv.ParseInt(v.Val.(string), 10, 64)
-	default:
-		return 0, errors.New(errors.ErrInvalidDataType,
-			"cannot convert %s to int64", v.Type)
-	}
-}
-
-// AsFloat64 转换为64位浮点数
-// AsFloat64 converts to 64-bit float
-func (v *Value) AsFloat64() (float64, error) {
-	if v.IsNull {
-		return 0, errors.New(errors.ErrInvalidDataType, "cannot convert NULL to float64")
-	}
-
-	switch v.Type {
-	case enum.TypeTinyInt:
-		return float64(v.Val.(int8)), nil
-	case enum.TypeSmallInt:
-		return float64(v.Val.(int16)), nil
-	case enum.TypeInt:
-		return float64(v.Val.(int32)), nil
-	case enum.TypeBigInt:
-		return float64(v.Val.(int64)), nil
-	case enum.TypeFloat:
-		return float64(v.Val.(float32)), nil
-	case enum.TypeDouble:
-		return v.Val.(float64), nil
-	case enum.TypeDecimal:
-		f, _ := v.Val.(*big.Float).Float64()
-		return f, nil
-	case enum.TypeBool:
-		if v.Val.(bool) {
-			return 1.0, nil
-		}
-		return 0.0, nil
-	case enum.TypeChar, enum.TypeVarchar, enum.TypeText:
-		return strconv.ParseFloat(v.Val.(string), 64)
-	default:
-		return 0, errors.New(errors.ErrInvalidDataType,
-			"cannot convert %s to float64", v.Type)
-	}
-}
-
-// AsString 转换为字符串
-// AsString converts to string
-func (v *Value) AsString() (string, error) {
-	if v.IsNull {
-		return "", errors.New(errors.ErrInvalidDataType, "cannot convert NULL to string")
-	}
-
-	switch v.Type {
-	case enum.TypeChar, enum.TypeVarchar, enum.TypeText,
-		enum.TypeTinyText, enum.TypeMediumText, enum.TypeLongText:
-		return v.Val.(string), nil
-	case enum.TypeBool:
-		if v.Val.(bool) {
-			return "true", nil
-		}
-		return "false", nil
-	case enum.TypeTinyInt:
-		return strconv.FormatInt(int64(v.Val.(int8)), 10), nil
-	case enum.TypeSmallInt:
-		return strconv.FormatInt(int64(v.Val.(int16)), 10), nil
-	case enum.TypeInt:
-		return strconv.FormatInt(int64(v.Val.(int32)), 10), nil
-	case enum.TypeBigInt:
-		return strconv.FormatInt(v.Val.(int64), 10), nil
-	case enum.TypeFloat:
-		return strconv.FormatFloat(float64(v.Val.(float32)), 'g', -1, 32), nil
-	case enum.TypeDouble:
-		return strconv.FormatFloat(v.Val.(float64), 'g', -1, 64), nil
-	case enum.TypeDecimal:
-		return v.Val.(*big.Float).String(), nil
-	case enum.TypeDate:
-		return v.Val.(time.Time).Format("2006-01-02"), nil
-	case enum.TypeTime:
-		return formatDuration(v.Val.(time.Duration)), nil
-	case enum.TypeDateTime:
-		return v.Val.(time.Time).Format("2006-01-02 15:04:05"), nil
-	case enum.TypeTimestamp:
-		return v.Val.(time.Time).Format("2006-01-02 15:04:05"), nil
-	case enum.TypeBinary, enum.TypeVarBinary, enum.TypeBlob,
-		enum.TypeTinyBlob, enum.TypeMediumBlob, enum.TypeLongBlob:
-		return string(v.Val.([]byte)), nil
-	case enum.TypeJSON:
-		b, err := json.Marshal(v.Val)
-		if err != nil {
-			return "", err
-		}
-		return string(b), nil
-	default:
-		return "", errors.New(errors.ErrInvalidDataType,
-			"cannot convert %s to string", v.Type)
-	}
-}
-
-// AsBytes 转换为字节数组
-// AsBytes converts to byte array
-func (v *Value) AsBytes() ([]byte, error) {
-	if v.IsNull {
-		return nil, errors.New(errors.ErrInvalidDataType, "cannot convert NULL to bytes")
-	}
-
-	switch v.Type {
-	case enum.TypeBinary, enum.TypeVarBinary, enum.TypeBlob,
-		enum.TypeTinyBlob, enum.TypeMediumBlob, enum.TypeLongBlob:
-		return v.Val.([]byte), nil
-	case enum.TypeChar, enum.TypeVarchar, enum.TypeText,
-		enum.TypeTinyText, enum.TypeMediumText, enum.TypeLongText:
-		return []byte(v.Val.(string)), nil
-	default:
-		// 其他类型先转换为字符串再转换为字节
-		// Other types convert to string first then to bytes
-		s, err := v.AsString()
-		if err != nil {
-			return nil, err
-		}
-		return []byte(s), nil
-	}
-}
-
-// AsTime 转换为时间
-// AsTime converts to time
-func (v *Value) AsTime() (time.Time, error) {
-	if v.IsNull {
-		return time.Time{}, errors.New(errors.ErrInvalidDataType, "cannot convert NULL to time")
-	}
-
-	switch v.Type {
-	case enum.TypeDate, enum.TypeDateTime, enum.TypeTimestamp:
-		return v.Val.(time.Time), nil
-	case enum.TypeChar, enum.TypeVarchar, enum.TypeText:
-		// 尝试多种时间格式
-		// Try multiple time formats
-		formats := []string{
-			"2006-01-02 15:04:05",
-			"2006-01-02",
-			time.RFC3339,
-			time.RFC3339Nano,
-		}
-		s := v.Val.(string)
-		for _, format := range formats {
-			if t, err := time.Parse(format, s); err == nil {
-				return t, nil
-			}
-		}
-		return time.Time{}, errors.New(errors.ErrInvalidDatetime, "invalid datetime: %s", s)
-	case enum.TypeInt, enum.TypeBigInt:
-		// Unix时间戳
-		// Unix timestamp
-		i, _ := v.AsInt64()
-		return time.Unix(i, 0), nil
-	default:
-		return time.Time{}, errors.New(errors.ErrInvalidDataType,
-			"cannot convert %s to time", v.Type)
-	}
-}
-
-// ===== 比较操作 Comparison Operations =====
-
-// Compare 比较两个值
-// Compare compares two values
-func (v *Value) Compare(other *Value) (int, error) {
-	// NULL值的比较
-	// NULL value comparison
-	if v.IsNull || other.IsNull {
-		if v.IsNull && other.IsNull {
-			return 0, nil
-		}
-		if v.IsNull {
-			return -1, nil
-		}
-		return 1, nil
-	}
-
-	// 相同类型直接比较
-	// Direct comparison for same type
-	if v.Type == other.Type {
-		return v.comparesSameType(other)
-	}
-
-	// 不同类型需要转换
-	// Different types need conversion
-	return v.compareDifferentType(other)
-}
-
-// compareSameType 比较相同类型的值
-// compareSameType compares values of same type
-func (v *Value) comparesSameType(other *Value) (int, error) {
-	switch v.Type {
-	case enum.TypeBool:
-		v1, v2 := v.Val.(bool), other.Val.(bool)
-		if v1 == v2 {
-			return 0, nil
-		}
-		if !v1 && v2 {
-			return -1, nil
-		}
-		return 1, nil
-
-	case enum.TypeTinyInt:
-		v1, v2 := v.Val.(int8), other.Val.(int8)
-		if v1 < v2 {
-			return -1, nil
-		} else if v1 > v2 {
-			return 1, nil
-		}
-		return 0, nil
-
-	case enum.TypeSmallInt:
-		v1, v2 := v.Val.(int16), other.Val.(int16)
-		if v1 < v2 {
-			return -1, nil
-		} else if v1 > v2 {
-			return 1, nil
-		}
-		return 0, nil
-
-	case enum.TypeInt:
-		v1, v2 := v.Val.(int32), other.Val.(int32)
-		if v1 < v2 {
-			return -1, nil
-		} else if v1 > v2 {
-			return 1, nil
-		}
-		return 0, nil
-
-	case enum.TypeBigInt:
-		v1, v2 := v.Val.(int64), other.Val.(int64)
-		if v1 < v2 {
-			return -1, nil
-		} else if v1 > v2 {
-			return 1, nil
-		}
-		return 0, nil
-
-	case enum.TypeFloat:
-		v1, v2 := v.Val.(float32), other.Val.(float32)
-		if v1 < v2 {
-			return -1, nil
-		} else if v1 > v2 {
-			return 1, nil
-		}
-		return 0, nil
-
-	case enum.TypeDouble:
-		v1, v2 := v.Val.(float64), other.Val.(float64)
-		if v1 < v2 {
-			return -1, nil
-		} else if v1 > v2 {
-			return 1, nil
-		}
-		return 0, nil
-
-	case enum.TypeDecimal:
-		v1, v2 := v.Val.(*big.Float), other.Val.(*big.Float)
-		return v1.Cmp(v2), nil
-
-	case enum.TypeChar, enum.TypeVarchar, enum.TypeText,
-		enum.TypeTinyText, enum.TypeMediumText, enum.TypeLongText:
-		v1, v2 := v.Val.(string), other.Val.(string)
-		// TODO: 使用collation进行比较
-		// TODO: use collation for comparison
-		return strings.Compare(v1, v2), nil
-
-	case enum.TypeBinary, enum.TypeVarBinary, enum.TypeBlob,
-		enum.TypeTinyBlob, enum.TypeMediumBlob, enum.TypeLongBlob:
-		v1, v2 := v.Val.([]byte), other.Val.([]byte)
-		return bytes.Compare(v1, v2), nil
-
-	case enum.TypeDate, enum.TypeDateTime, enum.TypeTimestamp:
-		v1, v2 := v.Val.(time.Time), other.Val.(time.Time)
-		if v1.Before(v2) {
-			return -1, nil
-		} else if v1.After(v2) {
-			return 1, nil
-		}
-		return 0, nil
-
-	case enum.TypeTime:
-		v1, v2 := v.Val.(time.Duration), other.Val.(time.Duration)
-		if v1 < v2 {
-			return -1, nil
-		} else if v1 > v2 {
-			return 1, nil
-		}
-		return 0, nil
-
-	default:
-		return 0, errors.New(errors.ErrInvalidOperation,
-			"cannot compare values of type %s", v.Type)
-	}
-}
-
-// compareDifferentType 比较不同类型的值
-// compareDifferentType compares values of different types
-func (v *Value) compareDifferentType(other *Value) (int, error) {
-	// 尝试将两个值都转换为相同类型
-	// Try to convert both values to same type
-
-	// 如果都是数值类型，转换为float64比较
-	// If both are numeric, convert to float64 for comparison
-	if v.Type.IsNumeric() && other.Type.IsNumeric() {
-		f1, err1 := v.AsFloat64()
-		f2, err2 := other.AsFloat64()
-		if err1 != nil || err2 != nil {
-			return 0, errors.New(errors.ErrInvalidOperation,
-				"cannot compare %s with %s", v.Type, other.Type)
-		}
-		if f1 < f2 {
-			return -1, nil
-		} else if f1 > f2 {
-			return 1, nil
-		}
-		return 0, nil
-	}
-
-	// 如果都是字符串类型，直接比较
-	// If both are string types, compare directly
-	if v.Type.IsString() && other.Type.IsString() {
-		s1, _ := v.AsString()
-		s2, _ := other.AsString()
-		return strings.Compare(s1, s2), nil
-	}
-
-	// 如果都是时间类型，转换为time.Time比较
-	// If both are datetime types, convert to time.Time for comparison
-	if v.Type.IsDateTime() && other.Type.IsDateTime() {
-		t1, err1 := v.AsTime()
-		t2, err2 := other.AsTime()
-		if err1 != nil || err2 != nil {
-			return 0, errors.New(errors.ErrInvalidOperation,
-				"cannot compare %s with %s", v.Type, other.Type)
-		}
-		if t1.Before(t2) {
-			return -1, nil
-		} else if t1.After(t2) {
-			return 1, nil
-		}
-		return 0, nil
-	}
-
-	// 其他情况尝试转换为字符串比较
-	// Other cases try to convert to string for comparison
-	s1, err1 := v.AsString()
-	s2, err2 := other.AsString()
-	if err1 != nil || err2 != nil {
-		return 0, errors.New(errors.ErrInvalidOperation,
-			"cannot compare %s with %s", v.Type, other.Type)
-	}
-	return strings.Compare(s1, s2), nil
-}
-
-// Equals 判断是否相等
-// Equals checks if equal
-func (v *Value) Equals(other *Value) bool {
-	cmp, err := v.Compare(other)
-	return err == nil && cmp == 0
-}
-
-// LessThan 判断是否小于
-// LessThan checks if less than
-func (v *Value) LessThan(other *Value) bool {
-	cmp, err := v.Compare(other)
-	return err == nil && cmp < 0
-}
-
-// GreaterThan 判断是否大于
-// GreaterThan checks if greater than
-func (v *Value) GreaterThan(other *Value) bool {
-	cmp, err := v.Compare(other)
-	return err == nil && cmp > 0
-}
-
-// ===== 算术操作 Arithmetic Operations =====
-
-// Add 加法
-// Add addition
-func (v *Value) Add(other *Value) (*Value, error) {
-	if v.IsNull || other.IsNull {
-		return NewNull(), nil
-	}
-
-	// 字符串连接
-	// String concatenation
-	if v.Type.IsString() || other.Type.IsString() {
-		s1, err1 := v.AsString()
-		s2, err2 := other.AsString()
-		if err1 != nil || err2 != nil {
-			return nil, errors.New(errors.ErrInvalidOperation,
-				"cannot add %s and %s", v.Type, other.Type)
-		}
-		return NewString(s1 + s2), nil
-	}
-
-	// 数值加法
-	// Numeric addition
-	if v.Type.IsNumeric() && other.Type.IsNumeric() {
-		// 根据类型选择合适的运算
-		// Choose appropriate operation based on type
-		if v.Type == enum.TypeDecimal || other.Type == enum.TypeDecimal {
-			// DECIMAL运算
-			// DECIMAL operation
-			d1 := v.toDecimal()
-			d2 := other.toDecimal()
-			result := new(big.Float).Add(d1, d2)
-			return NewDecimal(result), nil
-		} else if v.Type == enum.TypeDouble || other.Type == enum.TypeDouble ||
-			v.Type == enum.TypeFloat || other.Type == enum.TypeFloat {
-			// 浮点运算
-			// Float operation
-			f1, _ := v.AsFloat64()
-			f2, _ := other.AsFloat64()
-			return NewFloat64(f1 + f2), nil
-		} else {
-			// 整数运算
-			// Integer operation
-			i1, _ := v.AsInt64()
-			i2, _ := other.AsInt64()
-			return NewInt64(i1 + i2), nil
-		}
-	}
-
-	// 时间运算
-	// Time operations
-	if v.Type.IsDateTime() && other.Type == enum.TypeTime {
-		t, _ := v.AsTime()
-		d := other.Val.(time.Duration)
-		return NewDateTime(t.Add(d)), nil
-	}
-
-	return nil, errors.New(errors.ErrInvalidOperation,
-		"cannot add %s and %s", v.Type, other.Type)
-}
-
-// Subtract 减法
-// Subtract subtraction
-func (v *Value) Subtract(other *Value) (*Value, error) {
-	if v.IsNull || other.IsNull {
-		return NewNull(), nil
-	}
-
-	// 数值减法
-	// Numeric subtraction
-	if v.Type.IsNumeric() && other.Type.IsNumeric() {
-		if v.Type == enum.TypeDecimal || other.Type == enum.TypeDecimal {
-			d1 := v.toDecimal()
-			d2 := other.toDecimal()
-			result := new(big.Float).Sub(d1, d2)
-			return NewDecimal(result), nil
-		} else if v.Type == enum.TypeDouble || other.Type == enum.TypeDouble ||
-			v.Type == enum.TypeFloat || other.Type == enum.TypeFloat {
-			f1, _ := v.AsFloat64()
-			f2, _ := other.AsFloat64()
-			return NewFloat64(f1 - f2), nil
-		} else {
-			i1, _ := v.AsInt64()
-			i2, _ := other.AsInt64()
-			return NewInt64(i1 - i2), nil
-		}
-	}
-
-	// 时间减法
-	// Time subtraction
-	if v.Type.IsDateTime() && other.Type.IsDateTime() {
-		t1, _ := v.AsTime()
-		t2, _ := other.AsTime()
-		duration := t1.Sub(t2)
-		return NewTime(duration), nil
-	}
-
-	return nil, errors.New(errors.ErrInvalidOperation,
-		"cannot subtract %s from %s", other.Type, v.Type)
-}
-
-// Multiply 乘法
-// Multiply multiplication
-func (v *Value) Multiply(other *Value) (*Value, error) {
-	if v.IsNull || other.IsNull {
-		return NewNull(), nil
-	}
-
-	if !v.Type.IsNumeric() || !other.Type.IsNumeric() {
-		return nil, errors.New(errors.ErrInvalidOperation,
-			"cannot multiply %s and %s", v.Type, other.Type)
-	}
-
-	if v.Type == enum.TypeDecimal || other.Type == enum.TypeDecimal {
-		d1 := v.toDecimal()
-		d2 := other.toDecimal()
-		result := new(big.Float).Mul(d1, d2)
-		return NewDecimal(result), nil
-	} else if v.Type == enum.TypeDouble || other.Type == enum.TypeDouble ||
-		v.Type == enum.TypeFloat || other.Type == enum.TypeFloat {
-		f1, _ := v.AsFloat64()
-		f2, _ := other.AsFloat64()
-		return NewFloat64(f1 * f2), nil
-	} else {
-		i1, _ := v.AsInt64()
-		i2, _ := other.AsInt64()
-		return NewInt64(i1 * i2), nil
-	}
-}
-
-// Divide 除法
-// Divide division
-func (v *Value) Divide(other *Value) (*Value, error) {
-	if v.IsNull || other.IsNull {
-		return NewNull(), nil
-	}
-
-	if !v.Type.IsNumeric() || !other.Type.IsNumeric() {
-		return nil, errors.New(errors.ErrInvalidOperation,
-			"cannot divide %s by %s", v.Type, other.Type)
-	}
-
-	// 检查除零
-	// Check division by zero
-	if isZero(other) {
-		return nil, errors.New(errors.ErrDivisionByZero, "division by zero")
-	}
-
-	// 除法总是返回浮点数
-	// Division always returns float
-	f1, _ := v.AsFloat64()
-	f2, _ := other.AsFloat64()
-	return NewFloat64(f1 / f2), nil
-}
-
-// Modulo 取模
-// Modulo modulo operation
-func (v *Value) Modulo(other *Value) (*Value, error) {
-	if v.IsNull || other.IsNull {
-		return NewNull(), nil
-	}
-
-	if !v.Type.IsNumeric() || !other.Type.IsNumeric() {
-		return nil, errors.New(errors.ErrInvalidOperation,
-			"cannot modulo %s by %s", v.Type, other.Type)
-	}
-
-	// 检查除零
-	// Check division by zero
-	if isZero(other) {
-		return nil, errors.New(errors.ErrDivisionByZero, "modulo by zero")
-	}
-
-	// 转换为整数进行取模
-	// Convert to integer for modulo
-	i1, _ := v.AsInt64()
-	i2, _ := other.AsInt64()
-	return NewInt64(i1 % i2), nil
-}
-
-// ===== 逻辑操作 Logical Operations =====
-
-// And 逻辑与
-// And logical AND
-func (v *Value) And(other *Value) (*Value, error) {
-	if v.IsNull || other.IsNull {
-		// SQL三值逻辑
-		// SQL three-valued logic
-		b1, err1 := v.AsBool()
-		b2, err2 := other.AsBool()
-		if err1 == nil && !b1 {
-			return NewBool(false), nil
-		}
-		if err2 == nil && !b2 {
-			return NewBool(false), nil
-		}
-		return NewNull(), nil
-	}
-
-	b1, err1 := v.AsBool()
-	b2, err2 := other.AsBool()
-	if err1 != nil || err2 != nil {
-		return nil, errors.New(errors.ErrInvalidOperation,
-			"cannot perform AND on %s and %s", v.Type, other.Type)
-	}
-
-	return NewBool(b1 && b2), nil
-}
-
-// Or 逻辑或
-// Or logical OR
-func (v *Value) Or(other *Value) (*Value, error) {
-	if v.IsNull || other.IsNull {
-		// SQL三值逻辑
-		// SQL three-valued logic
-		b1, err1 := v.AsBool()
-		b2, err2 := other.AsBool()
-		if err1 == nil && b1 {
-			return NewBool(true), nil
-		}
-		if err2 == nil && b2 {
-			return NewBool(true), nil
-		}
-		return NewNull(), nil
-	}
-
-	b1, err1 := v.AsBool()
-	b2, err2 := other.AsBool()
-	if err1 != nil || err2 != nil {
-		return nil, errors.New(errors.ErrInvalidOperation,
-			"cannot perform OR on %s and %s", v.Type, other.Type)
-	}
-
-	return NewBool(b1 || b2), nil
-}
-
-// Not 逻辑非
-// Not logical NOT
-func (v *Value) Not() (*Value, error) {
-	if v.IsNull {
-		return NewNull(), nil
-	}
-
-	b, err := v.AsBool()
-	if err != nil {
-		return nil, errors.New(errors.ErrInvalidOperation,
-			"cannot perform NOT on %s", v.Type)
-	}
-
-	return NewBool(!b), nil
-}
-
-// ===== 位操作 Bitwise Operations =====
-
-// BitAnd 位与
-// BitAnd bitwise AND
-func (v *Value) BitAnd(other *Value) (*Value, error) {
-	if v.IsNull || other.IsNull {
-		return NewNull(), nil
-	}
-
-	if !v.Type.IsNumeric() || !other.Type.IsNumeric() {
-		return nil, errors.New(errors.ErrInvalidOperation,
-			"cannot perform bitwise AND on %s and %s", v.Type, other.Type)
-	}
-
-	i1, _ := v.AsInt64()
-	i2, _ := other.AsInt64()
-	return NewInt64(i1 & i2), nil
-}
-
-// BitOr 位或
-// BitOr bitwise OR
-func (v *Value) BitOr(other *Value) (*Value, error) {
-	if v.IsNull || other.IsNull {
-		return NewNull(), nil
-	}
-
-	if !v.Type.IsNumeric() || !other.Type.IsNumeric() {
-		return nil, errors.New(errors.ErrInvalidOperation,
-			"cannot perform bitwise OR on %s and %s", v.Type, other.Type)
-	}
-
-	i1, _ := v.AsInt64()
-	i2, _ := other.AsInt64()
-	return NewInt64(i1 | i2), nil
-}
-
-// BitXor 位异或
-// BitXor bitwise XOR
-func (v *Value) BitXor(other *Value) (*Value, error) {
-	if v.IsNull || other.IsNull {
-		return NewNull(), nil
-	}
-
-	if !v.Type.IsNumeric() || !other.Type.IsNumeric() {
-		return nil, errors.New(errors.ErrInvalidOperation,
-			"cannot perform bitwise XOR on %s and %s", v.Type, other.Type)
-	}
-
-	i1, _ := v.AsInt64()
-	i2, _ := other.AsInt64()
-	return NewInt64(i1 ^ i2), nil
-}
-
-// BitNot 位非
-// BitNot bitwise NOT
-func (v *Value) BitNot() (*Value, error) {
-	if v.IsNull {
-		return NewNull(), nil
-	}
-
-	if !v.Type.IsNumeric() {
-		return nil, errors.New(errors.ErrInvalidOperation,
-			"cannot perform bitwise NOT on %s", v.Type)
-	}
-
-	i, _ := v.AsInt64()
-	return NewInt64(^i), nil
-}
-
-// ===== 序列化与反序列化 Serialization and Deserialization =====
-
-// Serialize 序列化值
-// Serialize serializes value
-func (v *Value) Serialize() ([]byte, error) {
-	buf := new(bytes.Buffer)
-
-	// 写入类型
-	// Write type
-	if err := binary.Write(buf, binary.LittleEndian, int32(v.Type)); err != nil {
-		return nil, err
-	}
-
-	// 写入NULL标志
-	// Write NULL flag
-	if err := binary.Write(buf, binary.LittleEndian, v.IsNull); err != nil {
-		return nil, err
-	}
-
-	// 如果是NULL，直接返回
-	// If NULL, return directly
-	if v.IsNull {
-		return buf.Bytes(), nil
-	}
-
-	// 根据类型序列化值
-	// Serialize value based on type
-	switch v.Type {
-	case enum.TypeBool:
-		return serializeBool(buf, v.Val.(bool))
-	case enum.TypeTinyInt:
-		return serializeInt8(buf, v.Val.(int8))
-	case enum.TypeSmallInt:
-		return serializeInt16(buf, v.Val.(int16))
-	case enum.TypeInt:
-		return serializeInt32(buf, v.Val.(int32))
-	case enum.TypeBigInt:
-		return serializeInt64(buf, v.Val.(int64))
-	case enum.TypeFloat:
-		return serializeFloat32(buf, v.Val.(float32))
-	case enum.TypeDouble:
-		return serializeFloat64(buf, v.Val.(float64))
-	case enum.TypeChar, enum.TypeVarchar, enum.TypeText,
-		enum.TypeTinyText, enum.TypeMediumText, enum.TypeLongText:
-		return serializeString(buf, v.Val.(string))
-	case enum.TypeBinary, enum.TypeVarBinary, enum.TypeBlob,
-		enum.TypeTinyBlob, enum.TypeMediumBlob, enum.TypeLongBlob:
-		return serializeBytes(buf, v.Val.([]byte))
-	case enum.TypeDate, enum.TypeDateTime, enum.TypeTimestamp:
-		return serializeTime(buf, v.Val.(time.Time))
-	case enum.TypeTime:
-		return serializeDuration(buf, v.Val.(time.Duration))
-	case enum.TypeJSON:
-		return serializeJSON(buf, v.Val)
-	default:
-		return nil, errors.New(errors.ErrUnsupported,
-			"cannot serialize type %s", v.Type)
-	}
-}
-
-// Deserialize 反序列化值
-// Deserialize deserializes value
-func Deserialize(data []byte) (*Value, error) {
-	buf := bytes.NewReader(data)
-
-	// 读取类型
-	// Read type
-	var typeInt int32
-	if err := binary.Read(buf, binary.LittleEndian, &typeInt); err != nil {
-		return nil, err
-	}
-	dataType := enum.DataType(typeInt)
-
-	// 读取NULL标志
-	// Read NULL flag
-	var isNull bool
-	if err := binary.Read(buf, binary.LittleEndian, &isNull); err != nil {
-		return nil, err
-	}
-
-	// 如果是NULL，直接返回
-	// If NULL, return directly
-	if isNull {
-		return NewNull(), nil
-	}
-
-	// 根据类型反序列化值
-	// Deserialize value based on type
-	switch dataType {
-	case enum.TypeBool:
-		val, err := deserializeBool(buf)
-		if err != nil {
-			return nil, err
-		}
-		return NewBool(val), nil
-	case enum.TypeTinyInt:
-		val, err := deserializeInt8(buf)
-		if err != nil {
-			return nil, err
-		}
-		return NewInt8(val), nil
-	case enum.TypeSmallInt:
-		val, err := deserializeInt16(buf)
-		if err != nil {
-			return nil, err
-		}
-		return NewInt16(val), nil
-	case enum.TypeInt:
-		val, err := deserializeInt32(buf)
-		if err != nil {
-			return nil, err
-		}
-		return NewInt32(val), nil
-	case enum.TypeBigInt:
-		val, err := deserializeInt64(buf)
-		if err != nil {
-			return nil, err
-		}
-		return NewInt64(val), nil
-	case enum.TypeFloat:
-		val, err := deserializeFloat32(buf)
-		if err != nil {
-			return nil, err
-		}
-		return NewFloat32(val), nil
-	case enum.TypeDouble:
-		val, err := deserializeFloat64(buf)
-		if err != nil {
-			return nil, err
-		}
-		return NewFloat64(val), nil
-	case enum.TypeChar, enum.TypeVarchar, enum.TypeText,
-		enum.TypeTinyText, enum.TypeMediumText, enum.TypeLongText:
-		val, err := deserializeString(buf)
-		if err != nil {
-			return nil, err
-		}
-		return NewStringWithType(val, dataType), nil
-	case enum.TypeBinary, enum.TypeVarBinary, enum.TypeBlob,
-		enum.TypeTinyBlob, enum.TypeMediumBlob, enum.TypeLongBlob:
-		val, err := deserializeBytes(buf)
-		if err != nil {
-			return nil, err
-		}
-		return NewBytesWithType(val, dataType), nil
-	case enum.TypeDate:
-		val, err := deserializeTime(buf)
-		if err != nil {
-			return nil, err
-		}
-		return NewDate(val), nil
-	case enum.TypeDateTime:
-		val, err := deserializeTime(buf)
-		if err != nil {
-			return nil, err
-		}
-		return NewDateTime(val), nil
-	case enum.TypeTimestamp:
-		val, err := deserializeTime(buf)
-		if err != nil {
-			return nil, err
-		}
-		return NewTimestamp(val), nil
-	case enum.TypeTime:
-		val, err := deserializeDuration(buf)
-		if err != nil {
-			return nil, err
-		}
-		return NewTime(val), nil
-	case enum.TypeJSON:
-		val, err := deserializeJSON(buf)
-		if err != nil {
-			return nil, err
-		}
-		return NewJSON(val), nil
-	default:
-		return nil, errors.New(errors.ErrUnsupported,
-			"cannot deserialize type %s", dataType)
-	}
-}
-
-// ===== 辅助函数 Helper Functions =====
-
-// toDecimal 转换为DECIMAL
-// toDecimal converts to DECIMAL
-func (v *Value) toDecimal() *big.Float {
-	if v.Type == enum.TypeDecimal {
-		return v.Val.(*big.Float)
-	}
-	f, _ := v.AsFloat64()
-	return big.NewFloat(f)
-}
-
-// isZero 判断是否为零
-// isZero checks if zero
-func isZero(v *Value) bool {
-	if v.IsNull {
-		return false
-	}
-
-	switch v.Type {
-	case enum.TypeTinyInt:
-		return v.Val.(int8) == 0
-	case enum.TypeSmallInt:
-		return v.Val.(int16) == 0
-	case enum.TypeInt:
-		return v.Val.(int32) == 0
-	case enum.TypeBigInt:
-		return v.Val.(int64) == 0
-	case enum.TypeFloat:
-		return v.Val.(float32) == 0
-	case enum.TypeDouble:
-		return v.Val.(float64) == 0
-	case enum.TypeDecimal:
-		return v.Val.(*big.Float).Sign() == 0
-	default:
-		return false
-	}
-}
-
-// formatDuration 格式化时间间隔
-// formatDuration formats duration
-func formatDuration(d time.Duration) string {
-	negative := d < 0
-	if negative {
-		d = -d
-	}
-
-	hours := int(d.Hours())
-	minutes := int(d.Minutes()) % 60
-	seconds := int(d.Seconds()) % 60
-
-	result := fmt.Sprintf("%02d:%02d:%02d", hours, minutes, seconds)
-	if negative {
-		result = "-" + result
-	}
-	return result
-}
-
-// ===== 序列化辅助函数 Serialization Helper Functions =====
-
-func serializeBool(buf *bytes.Buffer, v bool) ([]byte, error) {
-	if err := binary.Write(buf, binary.LittleEndian, v); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-func deserializeBool(buf *bytes.Reader) (bool, error) {
-	var v bool
-	err := binary.Read(buf, binary.LittleEndian, &v)
-	return v, err
-}
-
-func serializeInt8(buf *bytes.Buffer, v int8) ([]byte, error) {
-	if err := binary.Write(buf, binary.LittleEndian, v); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-func deserializeInt8(buf *bytes.Reader) (int8, error) {
-	var v int8
-	err := binary.Read(buf, binary.LittleEndian, &v)
-	return v, err
-}
-
-func serializeInt16(buf *bytes.Buffer, v int16) ([]byte, error) {
-	if err := binary.Write(buf, binary.LittleEndian, v); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-func deserializeInt16(buf *bytes.Reader) (int16, error) {
-	var v int16
-	err := binary.Read(buf, binary.LittleEndian, &v)
-	return v, err
-}
-
-func serializeInt32(buf *bytes.Buffer, v int32) ([]byte, error) {
-	if err := binary.Write(buf, binary.LittleEndian, v); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-func deserializeInt32(buf *bytes.Reader) (int32, error) {
-	var v int32
-	err := binary.Read(buf, binary.LittleEndian, &v)
-	return v, err
-}
-
-func serializeInt64(buf *bytes.Buffer, v int64) ([]byte, error) {
-	if err := binary.Write(buf, binary.LittleEndian, v); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-func deserializeInt64(buf *bytes.Reader) (int64, error) {
-	var v int64
-	err := binary.Read(buf, binary.LittleEndian, &v)
-	return v, err
-}
-
-func serializeFloat32(buf *bytes.Buffer, v float32) ([]byte, error) {
-	if err := binary.Write(buf, binary.LittleEndian, v); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-func deserializeFloat32(buf *bytes.Reader) (float32, error) {
-	var v float32
-	err := binary.Read(buf, binary.LittleEndian, &v)
-	return v, err
-}
-
-func serializeFloat64(buf *bytes.Buffer, v float64) ([]byte, error) {
-	if err := binary.Write(buf, binary.LittleEndian, v); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-func deserializeFloat64(buf *bytes.Reader) (float64, error) {
-	var v float64
-	err := binary.Read(buf, binary.LittleEndian, &v)
-	return v, err
-}
-
-func serializeString(buf *bytes.Buffer, v string) ([]byte, error) {
-	data := []byte(v)
-	// 写入长度
-	// Write length
-	if err := binary.Write(buf, binary.LittleEndian, int32(len(data))); err != nil {
-		return nil, err
-	}
-	// 写入数据
-	// Write data
-	if _, err := buf.Write(data); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-func deserializeString(buf *bytes.Reader) (string, error) {
-	// 读取长度
-	// Read length
-	var length int32
-	if err := binary.Read(buf, binary.LittleEndian, &length); err != nil {
-		return "", err
-	}
-	// 读取数据
-	// Read data
-	data := make([]byte, length)
-	if _, err := buf.Read(data); err != nil {
-		return "", err
-	}
-	return string(data), nil
-}
-
-func serializeBytes(buf *bytes.Buffer, v []byte) ([]byte, error) {
-	// 写入长度
-	// Write length
-	if err := binary.Write(buf, binary.LittleEndian, int32(len(v))); err != nil {
-		return nil, err
-	}
-	// 写入数据
-	// Write data
-	if _, err := buf.Write(v); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-func deserializeBytes(buf *bytes.Reader) ([]byte, error) {
-	// 读取长度
-	// Read length
-	var length int32
-	if err := binary.Read(buf, binary.LittleEndian, &length); err != nil {
-		return nil, err
-	}
-	// 读取数据
-	// Read data
-	data := make([]byte, length)
-	if _, err := buf.Read(data); err != nil {
-		return nil, err
-	}
-	return data, nil
-}
-
-func serializeTime(buf *bytes.Buffer, v time.Time) ([]byte, error) {
-	// 序列化为Unix纳秒时间戳
-	// Serialize as Unix nanosecond timestamp
-	if err := binary.Write(buf, binary.LittleEndian, v.UnixNano()); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-func deserializeTime(buf *bytes.Reader) (time.Time, error) {
-	// 反序列化Unix纳秒时间戳
-	// Deserialize Unix nanosecond timestamp
-	var nanos int64
-	if err := binary.Read(buf, binary.LittleEndian, &nanos); err != nil {
-		return time.Time{}, err
-	}
-	return time.Unix(0, nanos), nil
-}
-
-func serializeDuration(buf *bytes.Buffer, v time.Duration) ([]byte, error) {
-	// 序列化为纳秒
-	// Serialize as nanoseconds
-	if err := binary.Write(buf, binary.LittleEndian, int64(v)); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-func deserializeDuration(buf *bytes.Reader) (time.Duration, error) {
-	// 反序列化纳秒
-	// Deserialize nanoseconds
-	var nanos int64
-	if err := binary.Read(buf, binary.LittleEndian, &nanos); err != nil {
-		return 0, err
-	}
-	return time.Duration(nanos), nil
-}
-
-func serializeJSON(buf *bytes.Buffer, v interface{}) ([]byte, error) {
-	// 序列化为JSON字符串
-	// Serialize as JSON string
-	data, err := json.Marshal(v)
-	if err != nil {
-		return nil, err
-	}
-	return serializeBytes(buf, data)
-}
-
-func deserializeJSON(buf *bytes.Reader) (interface{}, error) {
-	// 反序列化JSON字符串
-	// Deserialize JSON string
-	data, err := deserializeBytes(buf)
-	if err != nil {
-		return nil, err
-	}
-	var v interface{}
-	if err := json.Unmarshal(data, &v); err != nil {
-		return nil, err
-	}
-	return v, nil
-}
-
-// ===== 类型推断 Type Inference =====
-
-// InferType 从Go值推断数据类型
-// InferType infers data type from Go value
-func InferType(v interface{}) enum.DataType {
-	if v == nil {
-		return enum.TypeUnknown
-	}
-
-	switch v.(type) {
-	case bool:
-		return enum.TypeBool
-	case int8:
-		return enum.TypeTinyInt
-	case int16:
-		return enum.TypeSmallInt
-	case int32, int:
-		return enum.TypeInt
-	case int64:
-		return enum.TypeBigInt
-	case float32:
-		return enum.TypeFloat
-	case float64:
-		return enum.TypeDouble
-	case *big.Float:
-		return enum.TypeDecimal
-	case string:
-		return enum.TypeVarchar
-	case []byte:
-		return enum.TypeVarBinary
-	case time.Time:
-		return enum.TypeDateTime
-	case time.Duration:
-		return enum.TypeTime
-	default:
-		return enum.TypeUnknown
-	}
-}
-
-// NewFromInterface 从接口创建值
-// NewFromInterface creates value from interface
-func NewFromInterface(v interface{}) *Value {
-	if v == nil {
-		return NewNull()
-	}
-
-	switch val := v.(type) {
-	case bool:
-		return NewBool(val)
-	case int8:
-		return NewInt8(val)
-	case int16:
-		return NewInt16(val)
-	case int32:
-		return NewInt32(val)
-	case int:
-		return NewInt32(int32(val))
-	case int64:
-		return NewInt64(val)
-	case float32:
-		return NewFloat32(val)
-	case float64:
-		return NewFloat64(val)
-	case *big.Float:
-		return NewDecimal(val)
-	case string:
-		return NewString(val)
-	case []byte:
-		return NewBytes(val)
-	case time.Time:
-		return NewDateTime(val)
-	case time.Duration:
-		return NewTime(val)
-	default:
-		// 尝试JSON序列化
-		// Try JSON serialization
-		return NewJSON(v)
-	}
-}
-
-// ===== 聚合操作 Aggregate Operations =====
-
-// Sum 求和多个值
-// Sum sums multiple values
-func Sum(values []*Value) (*Value, error) {
-	if len(values) == 0 {
-		return NewNull(), nil
-	}
-
-	// 找到第一个非NULL值
-	// Find first non-NULL value
-	var result *Value
-	for _, v := range values {
-		if !v.IsNull {
-			result = v
-			break
-		}
-	}
-
-	if result == nil {
-		return NewNull(), nil
-	}
-
-	// 累加所有非NULL值
-	// Accumulate all non-NULL values
-	for i := 1; i < len(values); i++ {
-		if !values[i].IsNull {
-			var err error
-			result, err = result.Add(values[i])
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// Avg 求平均值
-// Avg calculates average
-func Avg(values []*Value) (*Value, error) {
-	if len(values) == 0 {
-		return NewNull(), nil
-	}
-
-	sum, err := Sum(values)
-	if err != nil {
-		return nil, err
-	}
-
-	if sum.IsNull {
-		return NewNull(), nil
-	}
-
-	// 计算非NULL值的数量
-	// Count non-NULL values
-	count := 0
-	for _, v := range values {
-		if !v.IsNull {
-			count++
-		}
-	}
-
-	if count == 0 {
-		return NewNull(), nil
-	}
-
-	return sum.Divide(NewInt64(int64(count)))
-}
-
-// Min 求最小值
-// Min finds minimum value
-func Min(values []*Value) (*Value, error) {
-	if len(values) == 0 {
-		return NewNull(), nil
-	}
-
-	var min *Value
-	for _, v := range values {
-		if v.IsNull {
-			continue
-		}
-		if min == nil {
-			min = v
-		} else {
-			cmp, err := v.Compare(min)
-			if err != nil {
-				return nil, err
-			}
-			if cmp < 0 {
-				min = v
-			}
-		}
-	}
-
-	if min == nil {
-		return NewNull(), nil
-	}
-	return min, nil
-}
-
-// Max 求最大值
-// Max finds maximum value
-func Max(values []*Value) (*Value, error) {
-	if len(values) == 0 {
-		return NewNull(), nil
-	}
-
-	var max *Value
-	for _, v := range values {
-		if v.IsNull {
-			continue
-		}
-		if max == nil {
-			max = v
-		} else {
-			cmp, err := v.Compare(max)
-			if err != nil {
-				return nil, err
-			}
-			if cmp > 0 {
-				max = v
-			}
-		}
-	}
-
-	if max == nil {
-		return NewNull(), nil
-	}
-	return max, nil
-}
-
-// Count 计数非NULL值
-// Count counts non-NULL values
-func Count(values []*Value) *Value {
-	count := 0
-	for _, v := range values {
-		if !v.IsNull {
-			count++
-		}
-	}
-	return NewInt64(int64(count))
-}
-
-// ===== 类型验证 Type Validation =====
-
-// ValidateType 验证值是否符合指定类型
-// ValidateType validates if value conforms to specified type
-func (v *Value) ValidateType(targetType enum.DataType) error {
-	if v.IsNull {
-		return nil // NULL值对任何类型都有效
-		// NULL value is valid for any type
-	}
-
-	// 相同类型直接返回
-	// Same type returns directly
-	if v.Type == targetType {
-		return nil
-	}
-
-	// 检查是否可以转换
-	// Check if conversion is possible
-	switch targetType {
-	case enum.TypeBool:
-		_, err := v.AsBool()
-		return err
-	case enum.TypeTinyInt, enum.TypeSmallInt, enum.TypeInt, enum.TypeBigInt:
-		i, err := v.AsInt64()
-		if err != nil {
-			return err
-		}
-		// 检查范围
-		// Check range
-		return checkIntRange(i, targetType)
-	case enum.TypeFloat, enum.TypeDouble:
-		_, err := v.AsFloat64()
-		return err
-	case enum.TypeChar, enum.TypeVarchar, enum.TypeText:
-		_, err := v.AsString()
-		return err
-	case enum.TypeBinary, enum.TypeVarBinary, enum.TypeBlob:
-		_, err := v.AsBytes()
-		return err
-	case enum.TypeDate, enum.TypeDateTime, enum.TypeTimestamp:
-		_, err := v.AsTime()
-		return err
-	default:
-		return errors.New(errors.ErrInvalidDataType,
-			"cannot validate type %s", targetType)
-	}
-}
-
-// checkIntRange 检查整数范围
-// checkIntRange checks integer range
-func checkIntRange(v int64, t enum.DataType) error {
+// ValueType 值类型枚举
+// ValueType enumeration for value types
+type ValueType int
+
+const (
+	// TypeNull NULL类型
+	// TypeNull NULL type
+	TypeNull ValueType = iota
+	// TypeBool 布尔类型
+	// TypeBool boolean type
+	TypeBool
+	// TypeInt8 8位整数类型
+	// TypeInt8 8-bit integer type
+	TypeInt8
+	// TypeInt16 16位整数类型
+	// TypeInt16 16-bit integer type
+	TypeInt16
+	// TypeInt32 32位整数类型
+	// TypeInt32 32-bit integer type
+	TypeInt32
+	// TypeInt64 64位整数类型
+	// TypeInt64 64-bit integer type
+	TypeInt64
+	// TypeFloat32 32位浮点类型
+	// TypeFloat32 32-bit float type
+	TypeFloat32
+	// TypeFloat64 64位浮点类型
+	// TypeFloat64 64-bit float type
+	TypeFloat64
+	// TypeString 字符串类型
+	// TypeString string type
+	TypeString
+	// TypeBlob 二进制类型
+	// TypeBlob binary type
+	TypeBlob
+	// TypeDate 日期类型
+	// TypeDate date type
+	TypeDate
+	// TypeTime 时间类型
+	// TypeTime time type
+	TypeTime
+	// TypeDateTime 日期时间类型
+	// TypeDateTime datetime type
+	TypeDateTime
+	// TypeTimestamp 时间戳类型
+	// TypeTimestamp timestamp type
+	TypeTimestamp
+	// TypeDecimal 精确小数类型
+	// TypeDecimal decimal type
+	TypeDecimal
+)
+
+// String 返回值类型的字符串表示
+// String returns string representation of value type
+func (t ValueType) String() string {
 	switch t {
-	case enum.TypeTinyInt:
-		if v < math.MinInt8 || v > math.MaxInt8 {
-			return errors.New(errors.ErrDataOutOfRange,
-				"value %d out of range for TINYINT", v)
-		}
-	case enum.TypeSmallInt:
-		if v < math.MinInt16 || v > math.MaxInt16 {
-			return errors.New(errors.ErrDataOutOfRange,
-				"value %d out of range for SMALLINT", v)
-		}
-	case enum.TypeInt:
-		if v < math.MinInt32 || v > math.MaxInt32 {
-			return errors.New(errors.ErrDataOutOfRange,
-				"value %d out of range for INT", v)
-		}
-	}
-	return nil
-}
-
-// ===== 字符串表示 String Representation =====
-
-// String 返回值的字符串表示
-// String returns string representation of value
-func (v *Value) String() string {
-	if v.IsNull {
+	case TypeNull:
 		return "NULL"
-	}
-
-	s, err := v.AsString()
-	if err != nil {
-		return fmt.Sprintf("<%s: %v>", v.Type, v.Val)
-	}
-	return s
-}
-
-// SQLString 返回SQL字符串表示
-// SQLString returns SQL string representation
-func (v *Value) SQLString() string {
-	if v.IsNull {
-		return "NULL"
-	}
-
-	switch v.Type {
-	case enum.TypeChar, enum.TypeVarchar, enum.TypeText,
-		enum.TypeTinyText, enum.TypeMediumText, enum.TypeLongText:
-		// 转义单引号
-		// Escape single quotes
-		s := strings.ReplaceAll(v.Val.(string), "'", "''")
-		return fmt.Sprintf("'%s'", s)
-	case enum.TypeBinary, enum.TypeVarBinary, enum.TypeBlob,
-		enum.TypeTinyBlob, enum.TypeMediumBlob, enum.TypeLongBlob:
-		// 十六进制表示
-		// Hexadecimal representation
-		return fmt.Sprintf("X'%X'", v.Val.([]byte))
-	case enum.TypeDate:
-		return fmt.Sprintf("'%s'", v.Val.(time.Time).Format("2006-01-02"))
-	case enum.TypeTime:
-		return fmt.Sprintf("'%s'", formatDuration(v.Val.(time.Duration)))
-	case enum.TypeDateTime, enum.TypeTimestamp:
-		return fmt.Sprintf("'%s'", v.Val.(time.Time).Format("2006-01-02 15:04:05"))
+	case TypeBool:
+		return "BOOL"
+	case TypeInt8:
+		return "TINYINT"
+	case TypeInt16:
+		return "SMALLINT"
+	case TypeInt32:
+		return "INT"
+	case TypeInt64:
+		return "BIGINT"
+	case TypeFloat32:
+		return "FLOAT"
+	case TypeFloat64:
+		return "DOUBLE"
+	case TypeString:
+		return "VARCHAR"
+	case TypeBlob:
+		return "BLOB"
+	case TypeDate:
+		return "DATE"
+	case TypeTime:
+		return "TIME"
+	case TypeDateTime:
+		return "DATETIME"
+	case TypeTimestamp:
+		return "TIMESTAMP"
+	case TypeDecimal:
+		return "DECIMAL"
 	default:
-		s, _ := v.AsString()
-		return s
+		return fmt.Sprintf("UNKNOWN_TYPE(%d)", int(t))
 	}
 }
 
-// ===== 哈希计算 Hash Calculation =====
+// IsNumeric 检查类型是否为数值类型
+// IsNumeric checks if type is numeric
+func (t ValueType) IsNumeric() bool {
+	return t >= TypeInt8 && t <= TypeDecimal && t != TypeString && t != TypeBlob
+}
 
-// Hash 计算值的哈希
-// Hash calculates hash of value
-func (v *Value) Hash() uint64 {
-	if v.IsNull {
-		return 0
+// IsInteger 检查类型是否为整数类型
+// IsInteger checks if type is integer type
+func (t ValueType) IsInteger() bool {
+	return t >= TypeInt8 && t <= TypeInt64
+}
+
+// IsFloat 检查类型是否为浮点类型
+// IsFloat checks if type is float type
+func (t ValueType) IsFloat() bool {
+	return t == TypeFloat32 || t == TypeFloat64 || t == TypeDecimal
+}
+
+// IsString 检查类型是否为字符串类型
+// IsString checks if type is string type
+func (t ValueType) IsString() bool {
+	return t == TypeString || t == TypeBlob
+}
+
+// IsTemporal 检查类型是否为时间类型
+// IsTemporal checks if type is temporal type
+func (t ValueType) IsTemporal() bool {
+	return t >= TypeDate && t <= TypeTimestamp
+}
+
+// CompareResult 比较结果枚举
+// CompareResult enumeration for comparison results
+type CompareResult int
+
+const (
+	// CompareLess 小于
+	// CompareLess less than
+	CompareLess CompareResult = -1
+	// CompareEqual 等于
+	// CompareEqual equal
+	CompareEqual CompareResult = 0
+	// CompareGreater 大于
+	// CompareGreater greater than
+	CompareGreater CompareResult = 1
+	// CompareIncomparable 不可比较
+	// CompareIncomparable incomparable
+	CompareIncomparable CompareResult = 2
+)
+
+// Value SQL值接口
+// Value interface for SQL values
+type Value interface {
+	// Type 返回值类型
+	// Type returns value type
+	Type() ValueType
+
+	// IsNull 检查是否为NULL
+	// IsNull checks if value is NULL
+	IsNull() bool
+
+	// String 返回字符串表示
+	// String returns string representation
+	String() string
+
+	// Compare 与另一个值比较
+	// Compare compares with another value
+	Compare(other Value) CompareResult
+
+	// Equals 检查是否相等
+	// Equals checks if values are equal
+	Equals(other Value) bool
+
+	// Clone 克隆值
+	// Clone clones the value
+	Clone() Value
+
+	// ToBool 转换为布尔值
+	// ToBool converts to boolean
+	ToBool() (bool, error)
+
+	// ToInt64 转换为64位整数
+	// ToInt64 converts to 64-bit integer
+	ToInt64() (int64, error)
+
+	// ToFloat64 转换为64位浮点数
+	// ToFloat64 converts to 64-bit float
+	ToFloat64() (float64, error)
+
+	// ToString 转换为字符串
+	// ToString converts to string
+	ToString() (string, error)
+
+	// ToBytes 转换为字节数组
+	// ToBytes converts to byte array
+	ToBytes() ([]byte, error)
+
+	// ToTime 转换为时间
+	// ToTime converts to time
+	ToTime() (time.Time, error)
+
+	// Serialize 序列化为字节数组
+	// Serialize serializes to byte array
+	Serialize() ([]byte, error)
+
+	// Size 返回值占用的字节大小
+	// Size returns size in bytes
+	Size() int
+
+	// Hash 返回哈希值
+	// Hash returns hash value
+	Hash() uint64
+}
+
+// NullValue NULL值实现
+// NullValue NULL value implementation
+type NullValue struct{}
+
+// NewNullValue 创建NULL值
+// NewNullValue creates NULL value
+func NewNullValue() Value {
+	return &NullValue{}
+}
+
+// Type 返回值类型
+// Type returns value type
+func (v *NullValue) Type() ValueType {
+	return TypeNull
+}
+
+// IsNull 检查是否为NULL
+// IsNull checks if value is NULL
+func (v *NullValue) IsNull() bool {
+	return true
+}
+
+// String 返回字符串表示
+// String returns string representation
+func (v *NullValue) String() string {
+	return "NULL"
+}
+
+// Compare 与另一个值比较
+// Compare compares with another value
+func (v *NullValue) Compare(other Value) CompareResult {
+	if other.IsNull() {
+		return CompareEqual
 	}
+	return CompareLess
+}
 
-	// 使用FNV-1a哈希算法
-	// Use FNV-1a hash algorithm
-	const fnvPrime = 1099511628211
-	hash := uint64(14695981039346656037)
-
-	// 哈希类型
-	// Hash type
-	hash ^= uint64(v.Type)
-	hash *= fnvPrime
-
-	// 哈希值
-	// Hash value
-	switch v.Type {
-	case enum.TypeBool:
-		if v.Val.(bool) {
-			hash ^= 1
-		}
-		hash *= fnvPrime
-	case enum.TypeTinyInt:
-		hash ^= uint64(v.Val.(int8))
-		hash *= fnvPrime
-	case enum.TypeSmallInt:
-		hash ^= uint64(v.Val.(int16))
-		hash *= fnvPrime
-	case enum.TypeInt:
-		hash ^= uint64(v.Val.(int32))
-		hash *= fnvPrime
-	case enum.TypeBigInt:
-		hash ^= uint64(v.Val.(int64))
-		hash *= fnvPrime
-	case enum.TypeFloat:
-		bits := math.Float32bits(v.Val.(float32))
-		hash ^= uint64(bits)
-		hash *= fnvPrime
-	case enum.TypeDouble:
-		bits := math.Float64bits(v.Val.(float64))
-		hash ^= bits
-		hash *= fnvPrime
-	case enum.TypeChar, enum.TypeVarchar, enum.TypeText:
-		s := v.Val.(string)
-		for i := 0; i < len(s); i++ {
-			hash ^= uint64(s[i])
-			hash *= fnvPrime
-		}
-	case enum.TypeBinary, enum.TypeVarBinary, enum.TypeBlob:
-		b := v.Val.([]byte)
-		for i := 0; i < len(b); i++ {
-			hash ^= uint64(b[i])
-			hash *= fnvPrime
-		}
-	case enum.TypeDate, enum.TypeDateTime, enum.TypeTimestamp:
-		t := v.Val.(time.Time)
-		hash ^= uint64(t.Unix())
-		hash *= fnvPrime
-	case enum.TypeTime:
-		d := v.Val.(time.Duration)
-		hash ^= uint64(d)
-		hash *= fnvPrime
-	}
-
-	return hash
+// Equals 检查是否相等
+// Equals checks if values are equal
+func (v *NullValue) Equals(other Value) bool {
+	return other.IsNull()
 }
 
 // Clone 克隆值
-// Clone clones value
-func (v *Value) Clone() *Value {
-	if v == nil {
-		return nil
+// Clone clones the value
+func (v *NullValue) Clone() Value {
+	return &NullValue{}
+}
+
+// ToBool 转换为布尔值
+// ToBool converts to boolean
+func (v *NullValue) ToBool() (bool, error) {
+	return false, errors.NewError(errors.ErrCodeInvalidOperation, "Cannot convert NULL to boolean")
+}
+
+// ToInt64 转换为64位整数
+// ToInt64 converts to 64-bit integer
+func (v *NullValue) ToInt64() (int64, error) {
+	return 0, errors.NewError(errors.ErrCodeInvalidOperation, "Cannot convert NULL to integer")
+}
+
+// ToFloat64 转换为64位浮点数
+// ToFloat64 converts to 64-bit float
+func (v *NullValue) ToFloat64() (float64, error) {
+	return 0, errors.NewError(errors.ErrCodeInvalidOperation, "Cannot convert NULL to float")
+}
+
+// ToString 转换为字符串
+// ToString converts to string
+func (v *NullValue) ToString() (string, error) {
+	return "", errors.NewError(errors.ErrCodeInvalidOperation, "Cannot convert NULL to string")
+}
+
+// ToBytes 转换为字节数组
+// ToBytes converts to byte array
+func (v *NullValue) ToBytes() ([]byte, error) {
+	return nil, errors.NewError(errors.ErrCodeInvalidOperation, "Cannot convert NULL to bytes")
+}
+
+// ToTime 转换为时间
+// ToTime converts to time
+func (v *NullValue) ToTime() (time.Time, error) {
+	return time.Time{}, errors.NewError(errors.ErrCodeInvalidOperation, "Cannot convert NULL to time")
+}
+
+// Serialize 序列化为字节数组
+// Serialize serializes to byte array
+func (v *NullValue) Serialize() ([]byte, error) {
+	return []byte{byte(TypeNull)}, nil
+}
+
+// Size 返回值占用的字节大小
+// Size returns size in bytes
+func (v *NullValue) Size() int {
+	return 1
+}
+
+// Hash 返回哈希值
+// Hash returns hash value
+func (v *NullValue) Hash() uint64 {
+	return 0
+}
+
+// BoolValue 布尔值实现
+// BoolValue boolean value implementation
+type BoolValue struct {
+	value bool
+}
+
+// NewBoolValue 创建布尔值
+// NewBoolValue creates boolean value
+func NewBoolValue(value bool) Value {
+	return &BoolValue{value: value}
+}
+
+// Type 返回值类型
+// Type returns value type
+func (v *BoolValue) Type() ValueType {
+	return TypeBool
+}
+
+// IsNull 检查是否为NULL
+// IsNull checks if value is NULL
+func (v *BoolValue) IsNull() bool {
+	return false
+}
+
+// String 返回字符串表示
+// String returns string representation
+func (v *BoolValue) String() string {
+	if v.value {
+		return "TRUE"
+	}
+	return "FALSE"
+}
+
+// Compare 与另一个值比较
+// Compare compares with another value
+func (v *BoolValue) Compare(other Value) CompareResult {
+	if other.IsNull() {
+		return CompareGreater
 	}
 
-	clone := &Value{
-		Type:      v.Type,
-		IsNull:    v.IsNull,
-		Collation: v.Collation,
+	otherBool, err := other.ToBool()
+	if err != nil {
+		return CompareIncomparable
 	}
 
-	if !v.IsNull {
-		switch v.Type {
-		case enum.TypeBinary, enum.TypeVarBinary, enum.TypeBlob,
-			enum.TypeTinyBlob, enum.TypeMediumBlob, enum.TypeLongBlob:
-			// 复制字节数组
-			// Copy byte array
-			src := v.Val.([]byte)
-			dst := make([]byte, len(src))
-			copy(dst, src)
-			clone.Val = dst
-		case enum.TypeDecimal:
-			// 复制big.Float
-			// Copy big.Float
-			src := v.Val.(*big.Float)
-			dst := new(big.Float).Set(src)
-			clone.Val = dst
-		default:
-			// 其他类型直接赋值
-			// Other types assign directly
-			clone.Val = v.Val
+	if v.value == otherBool {
+		return CompareEqual
+	} else if v.value {
+		return CompareGreater
+	}
+	return CompareLess
+}
+
+// Equals 检查是否相等
+// Equals checks if values are equal
+func (v *BoolValue) Equals(other Value) bool {
+	return v.Compare(other) == CompareEqual
+}
+
+// Clone 克隆值
+// Clone clones the value
+func (v *BoolValue) Clone() Value {
+	return &BoolValue{value: v.value}
+}
+
+// ToBool 转换为布尔值
+// ToBool converts to boolean
+func (v *BoolValue) ToBool() (bool, error) {
+	return v.value, nil
+}
+
+// ToInt64 转换为64位整数
+// ToInt64 converts to 64-bit integer
+func (v *BoolValue) ToInt64() (int64, error) {
+	if v.value {
+		return 1, nil
+	}
+	return 0, nil
+}
+
+// ToFloat64 转换为64位浮点数
+// ToFloat64 converts to 64-bit float
+func (v *BoolValue) ToFloat64() (float64, error) {
+	if v.value {
+		return 1.0, nil
+	}
+	return 0.0, nil
+}
+
+// ToString 转换为字符串
+// ToString converts to string
+func (v *BoolValue) ToString() (string, error) {
+	return v.String(), nil
+}
+
+// ToBytes 转换为字节数组
+// ToBytes converts to byte array
+func (v *BoolValue) ToBytes() ([]byte, error) {
+	return []byte(v.String()), nil
+}
+
+// ToTime 转换为时间
+// ToTime converts to time
+func (v *BoolValue) ToTime() (time.Time, error) {
+	return time.Time{}, errors.NewError(errors.ErrCodeInvalidOperation, "Cannot convert boolean to time")
+}
+
+// Serialize 序列化为字节数组
+// Serialize serializes to byte array
+func (v *BoolValue) Serialize() ([]byte, error) {
+	buf := make([]byte, 2)
+	buf[0] = byte(TypeBool)
+	if v.value {
+		buf[1] = 1
+	} else {
+		buf[1] = 0
+	}
+	return buf, nil
+}
+
+// Size 返回值占用的字节大小
+// Size returns size in bytes
+func (v *BoolValue) Size() int {
+	return 2
+}
+
+// Hash 返回哈希值
+// Hash returns hash value
+func (v *BoolValue) Hash() uint64 {
+	if v.value {
+		return 1
+	}
+	return 0
+}
+
+// IntValue 整数值实现
+// IntValue integer value implementation
+type IntValue struct {
+	value   int64
+	intType ValueType
+}
+
+// NewInt8Value 创建8位整数值
+// NewInt8Value creates 8-bit integer value
+func NewInt8Value(value int8) Value {
+	return &IntValue{value: int64(value), intType: TypeInt8}
+}
+
+// NewInt16Value 创建16位整数值
+// NewInt16Value creates 16-bit integer value
+func NewInt16Value(value int16) Value {
+	return &IntValue{value: int64(value), intType: TypeInt16}
+}
+
+// NewInt32Value 创建32位整数值
+// NewInt32Value creates 32-bit integer value
+func NewInt32Value(value int32) Value {
+	return &IntValue{value: int64(value), intType: TypeInt32}
+}
+
+// NewInt64Value 创建64位整数值
+// NewInt64Value creates 64-bit integer value
+func NewInt64Value(value int64) Value {
+	return &IntValue{value: value, intType: TypeInt64}
+}
+
+// Type 返回值类型
+// Type returns value type
+func (v *IntValue) Type() ValueType {
+	return v.intType
+}
+
+// IsNull 检查是否为NULL
+// IsNull checks if value is NULL
+func (v *IntValue) IsNull() bool {
+	return false
+}
+
+// String 返回字符串表示
+// String returns string representation
+func (v *IntValue) String() string {
+	return strconv.FormatInt(v.value, 10)
+}
+
+// Compare 与另一个值比较
+// Compare compares with another value
+func (v *IntValue) Compare(other Value) CompareResult {
+	if other.IsNull() {
+		return CompareGreater
+	}
+
+	otherInt, err := other.ToInt64()
+	if err != nil {
+		otherFloat, err := other.ToFloat64()
+		if err != nil {
+			return CompareIncomparable
+		}
+		thisFloat := float64(v.value)
+		if thisFloat < otherFloat {
+			return CompareLess
+		} else if thisFloat > otherFloat {
+			return CompareGreater
+		}
+		return CompareEqual
+	}
+
+	if v.value < otherInt {
+		return CompareLess
+	} else if v.value > otherInt {
+		return CompareGreater
+	}
+	return CompareEqual
+}
+
+// Equals 检查是否相等
+// Equals checks if values are equal
+func (v *IntValue) Equals(other Value) bool {
+	return v.Compare(other) == CompareEqual
+}
+
+// Clone 克隆值
+// Clone clones the value
+func (v *IntValue) Clone() Value {
+	return &IntValue{value: v.value, intType: v.intType}
+}
+
+// ToBool 转换为布尔值
+// ToBool converts to boolean
+func (v *IntValue) ToBool() (bool, error) {
+	return v.value != 0, nil
+}
+
+// ToInt64 转换为64位整数
+// ToInt64 converts to 64-bit integer
+func (v *IntValue) ToInt64() (int64, error) {
+	return v.value, nil
+}
+
+// ToFloat64 转换为64位浮点数
+// ToFloat64 converts to 64-bit float
+func (v *IntValue) ToFloat64() (float64, error) {
+	return float64(v.value), nil
+}
+
+// ToString 转换为字符串
+// ToString converts to string
+func (v *IntValue) ToString() (string, error) {
+	return v.String(), nil
+}
+
+// ToBytes 转换为字节数组
+// ToBytes converts to byte array
+func (v *IntValue) ToBytes() ([]byte, error) {
+	return []byte(v.String()), nil
+}
+
+// ToTime 转换为时间
+// ToTime converts to time
+func (v *IntValue) ToTime() (time.Time, error) {
+	if v.intType == TypeInt64 {
+		return time.Unix(v.value, 0), nil
+	}
+	return time.Time{}, errors.NewError(errors.ErrCodeInvalidOperation, "Cannot convert non-int64 integer to time")
+}
+
+// Serialize 序列化为字节数组
+// Serialize serializes to byte array
+func (v *IntValue) Serialize() ([]byte, error) {
+	buf := make([]byte, 9)
+	buf[0] = byte(v.intType)
+	binary.LittleEndian.PutUint64(buf[1:], uint64(v.value))
+	return buf, nil
+}
+
+// Size 返回值占用的字节大小
+// Size returns size in bytes
+func (v *IntValue) Size() int {
+	switch v.intType {
+	case TypeInt8:
+		return 2
+	case TypeInt16:
+		return 3
+	case TypeInt32:
+		return 5
+	case TypeInt64:
+		return 9
+	default:
+		return 9
+	}
+}
+
+// Hash 返回哈希值
+// Hash returns hash value
+func (v *IntValue) Hash() uint64 {
+	return uint64(v.value)
+}
+
+// FloatValue 浮点值实现
+// FloatValue float value implementation
+type FloatValue struct {
+	value     float64
+	floatType ValueType
+}
+
+// NewFloat32Value 创建32位浮点值
+// NewFloat32Value creates 32-bit float value
+func NewFloat32Value(value float32) Value {
+	return &FloatValue{value: float64(value), floatType: TypeFloat32}
+}
+
+// NewFloat64Value 创建64位浮点值
+// NewFloat64Value creates 64-bit float value
+func NewFloat64Value(value float64) Value {
+	return &FloatValue{value: value, floatType: TypeFloat64}
+}
+
+// Type 返回值类型
+// Type returns value type
+func (v *FloatValue) Type() ValueType {
+	return v.floatType
+}
+
+// IsNull 检查是否为NULL
+// IsNull checks if value is NULL
+func (v *FloatValue) IsNull() bool {
+	return false
+}
+
+// String 返回字符串表示
+// String returns string representation
+func (v *FloatValue) String() string {
+	if v.floatType == TypeFloat32 {
+		return strconv.FormatFloat(v.value, 'g', 7, 32)
+	}
+	return strconv.FormatFloat(v.value, 'g', 15, 64)
+}
+
+// Compare 与另一个值比较
+// Compare compares with another value
+func (v *FloatValue) Compare(other Value) CompareResult {
+	if other.IsNull() {
+		return CompareGreater
+	}
+
+	otherFloat, err := other.ToFloat64()
+	if err != nil {
+		return CompareIncomparable
+	}
+
+	if math.IsNaN(v.value) || math.IsNaN(otherFloat) {
+		return CompareIncomparable
+	}
+
+	if v.value < otherFloat {
+		return CompareLess
+	} else if v.value > otherFloat {
+		return CompareGreater
+	}
+	return CompareEqual
+}
+
+// Equals 检查是否相等
+// Equals checks if values are equal
+func (v *FloatValue) Equals(other Value) bool {
+	return v.Compare(other) == CompareEqual
+}
+
+// Clone 克隆值
+// Clone clones the value
+func (v *FloatValue) Clone() Value {
+	return &FloatValue{value: v.value, floatType: v.floatType}
+}
+
+// ToBool 转换为布尔值
+// ToBool converts to boolean
+func (v *FloatValue) ToBool() (bool, error) {
+	return v.value != 0.0, nil
+}
+
+// ToInt64 转换为64位整数
+// ToInt64 converts to 64-bit integer
+func (v *FloatValue) ToInt64() (int64, error) {
+	if math.IsNaN(v.value) || math.IsInf(v.value, 0) {
+		return 0, errors.NewError(errors.ErrCodeInvalidOperation, "Cannot convert NaN/Inf to integer")
+	}
+	return int64(v.value), nil
+}
+
+// ToFloat64 转换为64位浮点数
+// ToFloat64 converts to 64-bit float
+func (v *FloatValue) ToFloat64() (float64, error) {
+	return v.value, nil
+}
+
+// ToString 转换为字符串
+// ToString converts to string
+func (v *FloatValue) ToString() (string, error) {
+	return v.String(), nil
+}
+
+// ToBytes 转换为字节数组
+// ToBytes converts to byte array
+func (v *FloatValue) ToBytes() ([]byte, error) {
+	return []byte(v.String()), nil
+}
+
+// ToTime 转换为时间
+// ToTime converts to time
+func (v *FloatValue) ToTime() (time.Time, error) {
+	if math.IsNaN(v.value) || math.IsInf(v.value, 0) {
+		return time.Time{}, errors.NewError(errors.ErrCodeInvalidOperation, "Cannot convert NaN/Inf to time")
+	}
+	return time.Unix(int64(v.value), 0), nil
+}
+
+// Serialize 序列化为字节数组
+// Serialize serializes to byte array
+func (v *FloatValue) Serialize() ([]byte, error) {
+	buf := make([]byte, 9)
+	buf[0] = byte(v.floatType)
+	binary.LittleEndian.PutUint64(buf[1:], math.Float64bits(v.value))
+	return buf, nil
+}
+
+// Size 返回值占用的字节大小
+// Size returns size in bytes
+func (v *FloatValue) Size() int {
+	if v.floatType == TypeFloat32 {
+		return 5
+	}
+	return 9
+}
+
+// Hash 返回哈希值
+// Hash returns hash value
+func (v *FloatValue) Hash() uint64 {
+	return math.Float64bits(v.value)
+}
+
+// StringValue 字符串值实现
+// StringValue string value implementation
+type StringValue struct {
+	value      string
+	stringType ValueType
+}
+
+// NewStringValue 创建字符串值
+// NewStringValue creates string value
+func NewStringValue(value string) Value {
+	return &StringValue{value: value, stringType: TypeString}
+}
+
+// NewBlobValue 创建二进制数据值
+// NewBlobValue creates blob value
+func NewBlobValue(value []byte) Value {
+	return &StringValue{value: string(value), stringType: TypeBlob}
+}
+
+// Type 返回值类型
+// Type returns value type
+func (v *StringValue) Type() ValueType {
+	return v.stringType
+}
+
+// IsNull 检查是否为NULL
+// IsNull checks if value is NULL
+func (v *StringValue) IsNull() bool {
+	return false
+}
+
+// String 返回字符串表示
+// String returns string representation
+func (v *StringValue) String() string {
+	return v.value
+}
+
+// Compare 与另一个值比较
+// Compare compares with another value
+func (v *StringValue) Compare(other Value) CompareResult {
+	if other.IsNull() {
+		return CompareGreater
+	}
+
+	otherStr, err := other.ToString()
+	if err != nil {
+		return CompareIncomparable
+	}
+
+	result := strings.Compare(v.value, otherStr)
+	if result < 0 {
+		return CompareLess
+	} else if result > 0 {
+		return CompareGreater
+	}
+	return CompareEqual
+}
+
+// Equals 检查是否相等
+// Equals checks if values are equal
+func (v *StringValue) Equals(other Value) bool {
+	return v.Compare(other) == CompareEqual
+}
+
+// Clone 克隆值
+// Clone clones the value
+func (v *StringValue) Clone() Value {
+	return &StringValue{value: v.value, stringType: v.stringType}
+}
+
+// ToBool 转换为布尔值
+// ToBool converts to boolean
+func (v *StringValue) ToBool() (bool, error) {
+	lower := strings.ToLower(strings.TrimSpace(v.value))
+	switch lower {
+	case "true", "t", "1", "yes", "y", "on":
+		return true, nil
+	case "false", "f", "0", "no", "n", "off", "":
+		return false, nil
+	default:
+		return false, errors.NewErrorf(errors.ErrCodeInvalidFormat, "Cannot convert '%s' to boolean", v.value)
+	}
+}
+
+// ToInt64 转换为64位整数
+// ToInt64 converts to 64-bit integer
+func (v *StringValue) ToInt64() (int64, error) {
+	trimmed := strings.TrimSpace(v.value)
+	if trimmed == "" {
+		return 0, nil
+	}
+
+	result, err := strconv.ParseInt(trimmed, 10, 64)
+	if err != nil {
+		return 0, errors.NewErrorf(errors.ErrCodeInvalidFormat, "Cannot convert '%s' to integer: %v", v.value, err)
+	}
+	return result, nil
+}
+
+// ToFloat64 转换为64位浮点数
+// ToFloat64 converts to 64-bit float
+func (v *StringValue) ToFloat64() (float64, error) {
+	trimmed := strings.TrimSpace(v.value)
+	if trimmed == "" {
+		return 0.0, nil
+	}
+
+	result, err := strconv.ParseFloat(trimmed, 64)
+	if err != nil {
+		return 0, errors.NewErrorf(errors.ErrCodeInvalidFormat, "Cannot convert '%s' to float: %v", v.value, err)
+	}
+	return result, nil
+}
+
+// ToString 转换为字符串
+// ToString converts to string
+func (v *StringValue) ToString() (string, error) {
+	return v.value, nil
+}
+
+// ToBytes 转换为字节数组
+// ToBytes converts to byte array
+func (v *StringValue) ToBytes() ([]byte, error) {
+	return []byte(v.value), nil
+}
+
+// ToTime 转换为时间
+// ToTime converts to time
+func (v *StringValue) ToTime() (time.Time, error) {
+	trimmed := strings.TrimSpace(v.value)
+	if trimmed == "" {
+		return time.Time{}, nil
+	}
+
+	// 尝试多种时间格式
+	formats := []string{
+		"2006-01-02 15:04:05",
+		"2006-01-02T15:04:05",
+		"2006-01-02T15:04:05Z",
+		"2006-01-02",
+		"15:04:05",
+		time.RFC3339,
+		time.RFC822,
+	}
+
+	for _, format := range formats {
+		if t, err := time.Parse(format, trimmed); err == nil {
+			return t, nil
 		}
 	}
 
-	return clone
+	return time.Time{}, errors.NewErrorf(errors.ErrCodeInvalidFormat, "Cannot convert '%s' to time", v.value)
+}
+
+// Serialize 序列化为字节数组
+// Serialize serializes to byte array
+func (v *StringValue) Serialize() ([]byte, error) {
+	data := []byte(v.value)
+	buf := make([]byte, 1+4+len(data))
+	buf[0] = byte(v.stringType)
+	binary.LittleEndian.PutUint32(buf[1:5], uint32(len(data)))
+	copy(buf[5:], data)
+	return buf, nil
+}
+
+// Size 返回值占用的字节大小
+// Size returns size in bytes
+func (v *StringValue) Size() int {
+	return 1 + 4 + len(v.value)
+}
+
+// Hash 返回哈希值
+// Hash returns hash value
+func (v *StringValue) Hash() uint64 {
+	var h uint64 = 5381
+	for _, c := range []byte(v.value) {
+		h = ((h << 5) + h) + uint64(c)
+	}
+	return h
+}
+
+// DateTimeValue 日期时间值实现
+// DateTimeValue datetime value implementation
+type DateTimeValue struct {
+	value        time.Time
+	temporalType ValueType
+}
+
+// NewDateValue 创建日期值
+// NewDateValue creates date value
+func NewDateValue(value time.Time) Value {
+	return &DateTimeValue{value: value, temporalType: TypeDate}
+}
+
+// NewTimeValue 创建时间值
+// NewTimeValue creates time value
+func NewTimeValue(value time.Time) Value {
+	return &DateTimeValue{value: value, temporalType: TypeTime}
+}
+
+// NewDateTimeValue 创建日期时间值
+// NewDateTimeValue creates datetime value
+func NewDateTimeValue(value time.Time) Value {
+	return &DateTimeValue{value: value, temporalType: TypeDateTime}
+}
+
+// NewTimestampValue 创建时间戳值
+// NewTimestampValue creates timestamp value
+func NewTimestampValue(value time.Time) Value {
+	return &DateTimeValue{value: value, temporalType: TypeTimestamp}
+}
+
+// Type 返回值类型
+// Type returns value type
+func (v *DateTimeValue) Type() ValueType {
+	return v.temporalType
+}
+
+// IsNull 检查是否为NULL
+// IsNull checks if value is NULL
+func (v *DateTimeValue) IsNull() bool {
+	return v.value.IsZero()
+}
+
+// String 返回字符串表示
+// String returns string representation
+func (v *DateTimeValue) String() string {
+	if v.value.IsZero() {
+		return "NULL"
+	}
+
+	switch v.temporalType {
+	case TypeDate:
+		return v.value.Format("2006-01-02")
+	case TypeTime:
+		return v.value.Format("15:04:05")
+	case TypeDateTime:
+		return v.value.Format("2006-01-02 15:04:05")
+	case TypeTimestamp:
+		return v.value.Format("2006-01-02 15:04:05")
+	default:
+		return v.value.String()
+	}
+}
+
+// Compare 与另一个值比较
+// Compare compares with another value
+func (v *DateTimeValue) Compare(other Value) CompareResult {
+	if other.IsNull() {
+		if v.IsNull() {
+			return CompareEqual
+		}
+		return CompareGreater
+	}
+
+	if v.IsNull() {
+		return CompareLess
+	}
+
+	otherTime, err := other.ToTime()
+	if err != nil {
+		return CompareIncomparable
+	}
+
+	if v.value.Before(otherTime) {
+		return CompareLess
+	} else if v.value.After(otherTime) {
+		return CompareGreater
+	}
+	return CompareEqual
+}
+
+// Equals 检查是否相等
+// Equals checks if values are equal
+func (v *DateTimeValue) Equals(other Value) bool {
+	return v.Compare(other) == CompareEqual
+}
+
+// Clone 克隆值
+// Clone clones the value
+func (v *DateTimeValue) Clone() Value {
+	return &DateTimeValue{value: v.value, temporalType: v.temporalType}
+}
+
+// ToBool 转换为布尔值
+// ToBool converts to boolean
+func (v *DateTimeValue) ToBool() (bool, error) {
+	return !v.value.IsZero(), nil
+}
+
+// ToInt64 转换为64位整数
+// ToInt64 converts to 64-bit integer
+func (v *DateTimeValue) ToInt64() (int64, error) {
+	if v.value.IsZero() {
+		return 0, nil
+	}
+	return v.value.Unix(), nil
+}
+
+// ToFloat64 转换为64位浮点数
+// ToFloat64 converts to 64-bit float
+func (v *DateTimeValue) ToFloat64() (float64, error) {
+	if v.value.IsZero() {
+		return 0.0, nil
+	}
+	return float64(v.value.Unix()), nil
+}
+
+// ToString 转换为字符串
+// ToString converts to string
+func (v *DateTimeValue) ToString() (string, error) {
+	return v.String(), nil
+}
+
+// ToBytes 转换为字节数组
+// ToBytes converts to byte array
+func (v *DateTimeValue) ToBytes() ([]byte, error) {
+	return []byte(v.String()), nil
+}
+
+// ToTime 转换为时间
+// ToTime converts to time
+func (v *DateTimeValue) ToTime() (time.Time, error) {
+	return v.value, nil
+}
+
+// Serialize 序列化为字节数组
+// Serialize serializes to byte array
+func (v *DateTimeValue) Serialize() ([]byte, error) {
+	buf := make([]byte, 9)
+	buf[0] = byte(v.temporalType)
+	binary.LittleEndian.PutUint64(buf[1:], uint64(v.value.Unix()))
+	return buf, nil
+}
+
+// Size 返回值占用的字节大小
+// Size returns size in bytes
+func (v *DateTimeValue) Size() int {
+	return 9
+}
+
+// Hash 返回哈希值
+// Hash returns hash value
+func (v *DateTimeValue) Hash() uint64 {
+	return uint64(v.value.Unix())
+}
+
+// 工具函数 Utility functions
+
+// ParseValue 从字符串解析值
+// ParseValue parses value from string
+func ParseValue(valueType ValueType, str string) (Value, error) {
+	str = strings.TrimSpace(str)
+
+	// 处理NULL值
+	if strings.ToUpper(str) == "NULL" || str == "" {
+		return NewNullValue(), nil
+	}
+
+	switch valueType {
+	case TypeNull:
+		return NewNullValue(), nil
+
+	case TypeBool:
+		val, err := strconv.ParseBool(str)
+		if err != nil {
+			return nil, errors.NewErrorf(errors.ErrCodeInvalidFormat, "Cannot parse '%s' as boolean", str)
+		}
+		return NewBoolValue(val), nil
+
+	case TypeInt8:
+		val, err := strconv.ParseInt(str, 10, 8)
+		if err != nil {
+			return nil, errors.NewErrorf(errors.ErrCodeInvalidFormat, "Cannot parse '%s' as int8", str)
+		}
+		return NewInt8Value(int8(val)), nil
+
+	case TypeInt16:
+		val, err := strconv.ParseInt(str, 10, 16)
+		if err != nil {
+			return nil, errors.NewErrorf(errors.ErrCodeInvalidFormat, "Cannot parse '%s' as int16", str)
+		}
+		return NewInt16Value(int16(val)), nil
+
+	case TypeInt32:
+		val, err := strconv.ParseInt(str, 10, 32)
+		if err != nil {
+			return nil, errors.NewErrorf(errors.ErrCodeInvalidFormat, "Cannot parse '%s' as int32", str)
+		}
+		return NewInt32Value(int32(val)), nil
+
+	case TypeInt64:
+		val, err := strconv.ParseInt(str, 10, 64)
+		if err != nil {
+			return nil, errors.NewErrorf(errors.ErrCodeInvalidFormat, "Cannot parse '%s' as int64", str)
+		}
+		return NewInt64Value(val), nil
+
+	case TypeFloat32:
+		val, err := strconv.ParseFloat(str, 32)
+		if err != nil {
+			return nil, errors.NewErrorf(errors.ErrCodeInvalidFormat, "Cannot parse '%s' as float32", str)
+		}
+		return NewFloat32Value(float32(val)), nil
+
+	case TypeFloat64:
+		val, err := strconv.ParseFloat(str, 64)
+		if err != nil {
+			return nil, errors.NewErrorf(errors.ErrCodeInvalidFormat, "Cannot parse '%s' as float64", str)
+		}
+		return NewFloat64Value(val), nil
+
+	case TypeString:
+		return NewStringValue(str), nil
+
+	case TypeBlob:
+		return NewBlobValue([]byte(str)), nil
+
+	case TypeDate:
+		val, err := time.Parse("2006-01-02", str)
+		if err != nil {
+			return nil, errors.NewErrorf(errors.ErrCodeInvalidFormat, "Cannot parse '%s' as date", str)
+		}
+		return NewDateValue(val), nil
+
+	case TypeTime:
+		val, err := time.Parse("15:04:05", str)
+		if err != nil {
+			return nil, errors.NewErrorf(errors.ErrCodeInvalidFormat, "Cannot parse '%s' as time", str)
+		}
+		return NewTimeValue(val), nil
+
+	case TypeDateTime:
+		val, err := time.Parse("2006-01-02 15:04:05", str)
+		if err != nil {
+			return nil, errors.NewErrorf(errors.ErrCodeInvalidFormat, "Cannot parse '%s' as datetime", str)
+		}
+		return NewDateTimeValue(val), nil
+
+	case TypeTimestamp:
+		val, err := time.Parse("2006-01-02 15:04:05", str)
+		if err != nil {
+			// 尝试解析Unix时间戳
+			if timestamp, err2 := strconv.ParseInt(str, 10, 64); err2 == nil {
+				val = time.Unix(timestamp, 0)
+			} else {
+				return nil, errors.NewErrorf(errors.ErrCodeInvalidFormat, "Cannot parse '%s' as timestamp", str)
+			}
+		}
+		return NewTimestampValue(val), nil
+
+	default:
+		return nil, errors.NewErrorf(errors.ErrCodeInvalidParameter, "Unsupported value type: %v", valueType)
+	}
+}
+
+// DeserializeValue 从字节数组反序列化值
+// DeserializeValue deserializes value from byte array
+func DeserializeValue(data []byte) (Value, error) {
+	if len(data) < 1 {
+		return nil, errors.NewError(errors.ErrCodeInvalidFormat, "Invalid serialized value: empty data")
+	}
+
+	valueType := ValueType(data[0])
+
+	switch valueType {
+	case TypeNull:
+		return NewNullValue(), nil
+
+	case TypeBool:
+		if len(data) < 2 {
+			return nil, errors.NewError(errors.ErrCodeInvalidFormat, "Invalid serialized boolean value")
+		}
+		return NewBoolValue(data[1] != 0), nil
+
+	case TypeInt8, TypeInt16, TypeInt32, TypeInt64:
+		if len(data) < 9 {
+			return nil, errors.NewError(errors.ErrCodeInvalidFormat, "Invalid serialized integer value")
+		}
+		value := int64(binary.LittleEndian.Uint64(data[1:9]))
+		switch valueType {
+		case TypeInt8:
+			return NewInt8Value(int8(value)), nil
+		case TypeInt16:
+			return NewInt16Value(int16(value)), nil
+		case TypeInt32:
+			return NewInt32Value(int32(value)), nil
+		case TypeInt64:
+			return NewInt64Value(value), nil
+		}
+
+	case TypeFloat32, TypeFloat64:
+		if len(data) < 9 {
+			return nil, errors.NewError(errors.ErrCodeInvalidFormat, "Invalid serialized float value")
+		}
+		bits := binary.LittleEndian.Uint64(data[1:9])
+		value := math.Float64frombits(bits)
+		if valueType == TypeFloat32 {
+			return NewFloat32Value(float32(value)), nil
+		}
+		return NewFloat64Value(value), nil
+
+	case TypeString, TypeBlob:
+		if len(data) < 5 {
+			return nil, errors.NewError(errors.ErrCodeInvalidFormat, "Invalid serialized string value")
+		}
+		length := binary.LittleEndian.Uint32(data[1:5])
+		if len(data) < int(5+length) {
+			return nil, errors.NewError(errors.ErrCodeInvalidFormat, "Invalid serialized string value: insufficient data")
+		}
+		value := string(data[5 : 5+length])
+		if valueType == TypeString {
+			return NewStringValue(value), nil
+		}
+		return NewBlobValue([]byte(value)), nil
+
+	case TypeDate, TypeTime, TypeDateTime, TypeTimestamp:
+		if len(data) < 9 {
+			return nil, errors.NewError(errors.ErrCodeInvalidFormat, "Invalid serialized time value")
+		}
+		timestamp := int64(binary.LittleEndian.Uint64(data[1:9]))
+		value := time.Unix(timestamp, 0)
+		switch valueType {
+		case TypeDate:
+			return NewDateValue(value), nil
+		case TypeTime:
+			return NewTimeValue(value), nil
+		case TypeDateTime:
+			return NewDateTimeValue(value), nil
+		case TypeTimestamp:
+			return NewTimestampValue(value), nil
+		}
+
+	default:
+		return nil, errors.NewErrorf(errors.ErrCodeInvalidParameter, "Unsupported value type: %v", valueType)
+	}
+
+	return nil, errors.NewError(errors.ErrCodeInternalError, "Unexpected error in deserialization")
+}
+
+// ConvertValue 类型转换
+// ConvertValue converts value to target type
+func ConvertValue(value Value, targetType ValueType) (Value, error) {
+	if value.IsNull() {
+		return NewNullValue(), nil
+	}
+
+	if value.Type() == targetType {
+		return value.Clone(), nil
+	}
+
+	switch targetType {
+	case TypeNull:
+		return NewNullValue(), nil
+
+	case TypeBool:
+		val, err := value.ToBool()
+		if err != nil {
+			return nil, err
+		}
+		return NewBoolValue(val), nil
+
+	case TypeInt8:
+		val, err := value.ToInt64()
+		if err != nil {
+			return nil, err
+		}
+		if val < math.MinInt8 || val > math.MaxInt8 {
+			return nil, errors.NewErrorf(errors.ErrCodeValueOutOfRange, "Value %d out of range for int8", val)
+		}
+		return NewInt8Value(int8(val)), nil
+
+	case TypeInt16:
+		val, err := value.ToInt64()
+		if err != nil {
+			return nil, err
+		}
+		if val < math.MinInt16 || val > math.MaxInt16 {
+			return nil, errors.NewErrorf(errors.ErrCodeValueOutOfRange, "Value %d out of range for int16", val)
+		}
+		return NewInt16Value(int16(val)), nil
+
+	case TypeInt32:
+		val, err := value.ToInt64()
+		if err != nil {
+			return nil, err
+		}
+		if val < math.MinInt32 || val > math.MaxInt32 {
+			return nil, errors.NewErrorf(errors.ErrCodeValueOutOfRange, "Value %d out of range for int32", val)
+		}
+		return NewInt32Value(int32(val)), nil
+
+	case TypeInt64:
+		val, err := value.ToInt64()
+		if err != nil {
+			return nil, err
+		}
+		return NewInt64Value(val), nil
+
+	case TypeFloat32:
+		val, err := value.ToFloat64()
+		if err != nil {
+			return nil, err
+		}
+		if math.Abs(val) > math.MaxFloat32 {
+			return nil, errors.NewErrorf(errors.ErrCodeValueOutOfRange, "Value %f out of range for float32", val)
+		}
+		return NewFloat32Value(float32(val)), nil
+
+	case TypeFloat64:
+		val, err := value.ToFloat64()
+		if err != nil {
+			return nil, err
+		}
+		return NewFloat64Value(val), nil
+
+	case TypeString:
+		val, err := value.ToString()
+		if err != nil {
+			return nil, err
+		}
+		if len(val) > constants.MaxValueLength {
+			return nil, errors.NewErrorf(errors.ErrCodeValueOutOfRange, "String length %d exceeds maximum %d", len(val), constants.MaxValueLength)
+		}
+		return NewStringValue(val), nil
+
+	case TypeBlob:
+		val, err := value.ToBytes()
+		if err != nil {
+			return nil, err
+		}
+		if len(val) > constants.MaxValueLength {
+			return nil, errors.NewErrorf(errors.ErrCodeValueOutOfRange, "Blob length %d exceeds maximum %d", len(val), constants.MaxValueLength)
+		}
+		return NewBlobValue(val), nil
+
+	case TypeDate:
+		val, err := value.ToTime()
+		if err != nil {
+			return nil, err
+		}
+		return NewDateValue(val), nil
+
+	case TypeTime:
+		val, err := value.ToTime()
+		if err != nil {
+			return nil, err
+		}
+		return NewTimeValue(val), nil
+
+	case TypeDateTime:
+		val, err := value.ToTime()
+		if err != nil {
+			return nil, err
+		}
+		return NewDateTimeValue(val), nil
+
+	case TypeTimestamp:
+		val, err := value.ToTime()
+		if err != nil {
+			return nil, err
+		}
+		return NewTimestampValue(val), nil
+
+	default:
+		return nil, errors.NewErrorf(errors.ErrCodeInvalidParameter, "Unsupported target type: %v", targetType)
+	}
+}
+
+// ValidateValue 验证值的有效性
+// ValidateValue validates value
+func ValidateValue(value Value, constraints map[string]interface{}) error {
+	if value.IsNull() {
+		if required, ok := constraints["required"]; ok && required.(bool) {
+			return errors.NewError(errors.ErrCodeRequiredField, "Value cannot be NULL")
+		}
+		return nil
+	}
+
+	// 检查长度限制
+	if maxLen, ok := constraints["max_length"]; ok {
+		str, err := value.ToString()
+		if err == nil && utf8.RuneCountInString(str) > maxLen.(int) {
+			return errors.NewErrorf(errors.ErrCodeValueOutOfRange, "Value length %d exceeds maximum %d", utf8.RuneCountInString(str), maxLen.(int))
+		}
+	}
+
+	// 检查数值范围
+	if value.Type().IsNumeric() {
+		if minVal, ok := constraints["min_value"]; ok {
+			if floatVal, err := value.ToFloat64(); err == nil && floatVal < minVal.(float64) {
+				return errors.NewErrorf(errors.ErrCodeValueOutOfRange, "Value %f is less than minimum %f", floatVal, minVal.(float64))
+			}
+		}
+
+		if maxVal, ok := constraints["max_value"]; ok {
+			if floatVal, err := value.ToFloat64(); err == nil && floatVal > maxVal.(float64) {
+				return errors.NewErrorf(errors.ErrCodeValueOutOfRange, "Value %f is greater than maximum %f", floatVal, maxVal.(float64))
+			}
+		}
+	}
+
+	return nil
+}
+
+// CompareValues 比较两个值数组
+// CompareValues compares two value arrays
+func CompareValues(left, right []Value) CompareResult {
+	minLen := len(left)
+	if len(right) < minLen {
+		minLen = len(right)
+	}
+
+	for i := 0; i < minLen; i++ {
+		result := left[i].Compare(right[i])
+		if result != CompareEqual {
+			return result
+		}
+	}
+
+	if len(left) < len(right) {
+		return CompareLess
+	} else if len(left) > len(right) {
+		return CompareGreater
+	}
+
+	return CompareEqual
+}
+
+// HashValues 计算值数组的哈希值
+// HashValues calculates hash value for value array
+func HashValues(values []Value) uint64 {
+	var h uint64 = 5381
+	for _, v := range values {
+		h = ((h << 5) + h) + v.Hash()
+	}
+	return h
+}
+
+// ValuesToJSON 将值数组转换为JSON
+// ValuesToJSON converts value array to JSON
+func ValuesToJSON(values []Value) ([]byte, error) {
+	result := make([]interface{}, len(values))
+
+	for i, v := range values {
+		if v.IsNull() {
+			result[i] = nil
+		} else {
+			switch v.Type() {
+			case TypeBool:
+				val, _ := v.ToBool()
+				result[i] = val
+			case TypeInt8, TypeInt16, TypeInt32, TypeInt64:
+				val, _ := v.ToInt64()
+				result[i] = val
+			case TypeFloat32, TypeFloat64:
+				val, _ := v.ToFloat64()
+				result[i] = val
+			case TypeString, TypeBlob:
+				val, _ := v.ToString()
+				result[i] = val
+			case TypeDate, TypeTime, TypeDateTime, TypeTimestamp:
+				val, _ := v.ToString()
+				result[i] = val
+			default:
+				val, _ := v.ToString()
+				result[i] = val
+			}
+		}
+	}
+
+	return json.Marshal(result)
 }
