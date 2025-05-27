@@ -1,214 +1,370 @@
-// Package log provides a unified logging interface and default implementation for Guocedb.
-// This ensures consistent logging practices across the entire project, allowing for
-// centralized configuration, output redirection, and easy integration with various
-// logging backends.
-//
-// 此包为 Guocedb 提供了一个统一的日志接口和默认实现。
-// 这确保了整个项目中日志实践的一致性，允许集中配置、输出重定向，
-// 并方便与各种日志后端集成。
 package log
 
 import (
 	"fmt"
-	"io"
-	"log"  // Standard Go logger
-	"os"   // For file operations
-	"sync" // For mutex to protect logger
-	"time" // For timestamping logs
-
-	"github.com/turtacn/guocedb/common/constants"  // For default log file path
-	"github.com/turtacn/guocedb/common/types/enum" // For LogLevel enum
+	"log" // Standard Go logger package // 标准 Go 日志包
+	"os"
+	"strings"
+	"sync" // Needed if SetGlobalLogger can be called concurrently // 如果 SetGlobalLogger 可能被并发调用则需要
 )
 
-// Logger is the interface that defines the logging capabilities for Guocedb.
-// Any component requiring logging should depend on this interface, not a concrete implementation.
-//
-// Logger 接口定义了 Guocedb 的日志记录能力。
-// 任何需要日志记录的组件都应该依赖此接口，而不是具体的实现。
+// LogLevel defines the logging severity levels.
+// LogLevel 定义日志严重性级别。
+type LogLevel int
+
+const (
+	// DebugLevel logs are typically voluminous, and are usually disabled in
+	// production.
+	// DebugLevel 日志通常量很大，并且通常在生产环境中禁用。
+	DebugLevel LogLevel = iota
+	// InfoLevel is the default logging priority.
+	// InfoLevel 是默认的日志记录优先级。
+	InfoLevel
+	// WarnLevel logs are more important than Info, but don't need individual
+	// human review.
+	// WarnLevel 日志比 Info 更重要，但不需要单独的人工审查。
+	WarnLevel
+	// ErrorLevel logs are high-priority. If an application is running smoothly,
+	// it shouldn't generate any error-level logs.
+	// ErrorLevel 日志是高优先级的。如果应用程序运行平稳，则不应生成任何错误级别的日志。
+	ErrorLevel
+	// FatalLevel logs a message, then calls os.Exit(1).
+	// FatalLevel 记录一条消息，然后调用 os.Exit(1)。
+	FatalLevel
+	// DisabledLevel disables logging.
+	// DisabledLevel 禁用日志记录。
+	DisabledLevel
+)
+
+// Logger interface defines the standard logging methods for GuoceDB.
+// All log methods ending in 'f' accept a format string and arguments, similar to fmt.Printf.
+// The With method allows adding structured context (key-value pairs) to the logger.
+// Logger 接口定义了 GuoceDB 的标准日志记录方法。
+// 所有以 'f' 结尾的日志方法都接受格式字符串和参数，类似于 fmt.Printf。
+// With 方法允许向日志记录器添加结构化上下文（键值对）。
 type Logger interface {
-	// Debug logs a message at the DEBUG level.
-	// 记录 DEBUG 级别的消息。
-	Debug(format string, args ...interface{})
-	// Info logs a message at the INFO level.
-	// 记录 INFO 级别的消息。
-	Info(format string, args ...interface{})
-	// Warn logs a message at the WARN level.
-	// 记录 WARN 级别的消息。
-	Warn(format string, args ...interface{})
-	// Error logs a message at the ERROR level.
-	// 记录 ERROR 级别的消息。
-	Error(format string, args ...interface{})
-	// Fatal logs a message at the FATAL level, then exits the application.
-	// 记录 FATAL 级别的消息，然后退出应用程序。
-	Fatal(format string, args ...interface{})
-	// SetLevel sets the current logging level. Messages below this level will be ignored.
-	// 设置当前的日志级别。低于此级别的消息将被忽略。
-	SetLevel(level enum.LogLevel)
+	// Debugf logs messages useful for debugging.
+	// Debugf 记录对调试有用的消息。
+	Debugf(format string, args ...interface{})
+	// Infof logs general informational messages.
+	// Infof 记录常规信息性消息。
+	Infof(format string, args ...interface{})
+	// Warnf logs warnings that might indicate potential issues.
+	// Warnf 记录可能指示潜在问题的警告。
+	Warnf(format string, args ...interface{})
+	// Errorf logs errors that indicate problems.
+	// Errorf 记录指示问题的错误。
+	Errorf(format string, args ...interface{})
+	// Fatalf logs an error message and then exits the application (os.Exit(1)).
+	// Fatalf 记录错误消息，然后退出应用程序 (os.Exit(1))。
+	Fatalf(format string, args ...interface{})
+
+	// With returns a new logger instance with the specified key-value pairs added as context.
+	// Keys should ideally be strings. Alternating keys and values are expected.
+	// With 返回一个新的日志记录器实例，其中添加了指定的键值对作为上下文。
+	// 键最好是字符串。期望交替出现键和值。
+	With(args ...interface{}) Logger
+
 	// GetLevel returns the current logging level.
-	// 获取当前的日志级别。
-	GetLevel() enum.LogLevel
+	// GetLevel 返回当前的日志记录级别。
+	GetLevel() LogLevel
 }
 
-// defaultLogger is a simple implementation of the Logger interface using the standard Go `log` package.
-// It supports different logging levels and can write to a file or standard output.
-//
-// defaultLogger 是 Logger 接口的简单实现，使用了 Go 标准库的 `log` 包。
-// 它支持不同的日志级别，并且可以写入文件或标准输出。
-type defaultLogger struct {
-	mu     sync.RWMutex  // Mutex to protect log level and output writer
-	level  enum.LogLevel // Current active logging level
-	logger *log.Logger   // Underlying standard Go logger
-	output io.Writer     // Where the logs are written (e.g., os.Stdout, file)
-	file   *os.File      // File handle if logging to a file
-}
+// --- Global Logger ---
 
+// globalLogger holds the current logger instance for the application.
+// It defaults to a no-op logger until configured otherwise.
+// Access is protected by a mutex to allow safe concurrent calls to SetGlobalLogger,
+// although typically it's set only once at startup.
+// globalLogger 保存应用程序的当前日志记录器实例。
+// 在配置之前，它默认为无操作日志记录器。
+// 访问受互斥锁保护，以允许对 SetGlobalLogger 进行安全的并发调用，
+// 尽管通常它仅在启动时设置一次。
 var (
-	// globalLogger is the singleton instance of the default logger.
-	// It's initialized once and used throughout the application.
-	//
-	// globalLogger 是默认日志器的单例实例。
-	// 它只初始化一次，并在整个应用程序中使用。
-	globalLogger *defaultLogger
-	// once ensures that the globalLogger is initialized only once.
-	// once 确保 globalLogger 只初始化一次。
-	once sync.Once
+	globalLogger Logger = &noopLogger{} // Default to no-op // 默认为无操作
+	globalMu     sync.RWMutex
 )
 
-// InitLogger initializes the global logger. It should be called once at application startup.
-// If filePath is empty, logs will be written to os.Stdout.
-//
-// InitLogger 初始化全局日志器。它应该在应用程序启动时只调用一次。
-// 如果 filePath 为空，日志将写入 os.Stdout。
-func InitLogger(level enum.LogLevel, filePath string) error {
-	var initErr error
-	once.Do(func() {
-		var output io.Writer
-		var file *os.File
-		if filePath != "" {
-			var err error
-			file, err = os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-			if err != nil {
-				initErr = fmt.Errorf("failed to open log file %s: %w", filePath, err)
-				return // Exit func for once.Do
-			}
-			output = io.MultiWriter(os.Stdout, file) // Log to both stdout and file
-		} else {
-			output = os.Stdout
-		}
-
-		stdLogger := log.New(output, "", log.LstdFlags|log.Lmicroseconds|log.Lshortfile)
-		globalLogger = &defaultLogger{
-			level:  level,
-			logger: stdLogger,
-			output: output,
-			file:   file,
-		}
-		globalLogger.Info("Logger initialized. Level: %s, Output: %s", level.String(), filePath)
-	})
-	return initErr
+// SetGlobalLogger replaces the default logger with the provided one.
+// This should typically be called once during application initialization before
+// significant concurrent logging begins. It is safe for concurrent use.
+// SetGlobalLogger 用提供的日志记录器替换默认日志记录器。
+// 通常应在应用程序初始化期间，在大量并发日志记录开始之前调用一次。
+// 它可以安全地并发使用。
+func SetGlobalLogger(logger Logger) {
+	globalMu.Lock()
+	defer globalMu.Unlock()
+	if logger == nil {
+		// Fallback to no-op logger if nil is provided
+		// 如果提供 nil，则回退到无操作日志记录器
+		globalLogger = &noopLogger{}
+		return
+	}
+	globalLogger = logger
 }
 
-// GetLogger returns the singleton instance of the global logger.
-// It panics if InitLogger has not been called.
-//
-// GetLogger 返回全局日志器的单例实例。
-// 如果 InitLogger 尚未调用，它会 panic。
+// GetLogger returns the currently configured global logger.
+// Useful if direct access to the logger instance (e.g., for With) is needed.
+// It is safe for concurrent use.
+// GetLogger 返回当前配置的全局日志记录器。
+// 如果需要直接访问日志记录器实例（例如，用于 With），则很有用。
+// 它可以安全地并发使用。
 func GetLogger() Logger {
-	if globalLogger == nil {
-		// This should not happen in a properly initialized application.
-		// For robustness in early development, we can try to initialize a minimal logger.
-		// In production, this indicates a startup issue.
-		_ = InitLogger(enum.LogLevel_INFO, constants.DefaultLogFilePath)
-		if globalLogger == nil { // Still nil? Something is critically wrong.
-			panic("logger not initialized. Call InitLogger() first.")
-		}
-	}
+	globalMu.RLock()
+	defer globalMu.RUnlock()
 	return globalLogger
 }
 
-// CloseLogger gracefully closes the log file if it was opened.
-// It should be called before application shutdown.
-//
-// CloseLogger 优雅地关闭日志文件（如果已打开）。
-// 它应该在应用程序关闭前调用。
-func CloseLogger() error {
-	if globalLogger != nil {
-		globalLogger.mu.Lock()
-		defer globalLogger.mu.Unlock()
-		if globalLogger.file != nil {
-			err := globalLogger.file.Close()
-			globalLogger.file = nil // Clear file handle
-			if err != nil {
-				return fmt.Errorf("failed to close log file: %w", err)
-			}
-		}
-	}
-	return nil
+// --- Convenience Functions ---
+// These functions call the corresponding methods on the global logger.
+// --- 便捷函数 ---
+// 这些函数调用全局日志记录器上的相应方法。
+
+// Debugf logs a message at DebugLevel using the global logger.
+// Debugf 使用全局日志记录器在 DebugLevel 记录一条消息。
+func Debugf(format string, args ...interface{}) {
+	GetLogger().Debugf(format, args...) // Use GetLogger for safe access // 使用 GetLogger 进行安全访问
 }
 
-// logf formats and logs a message at the specified level.
-//
-// logf 以指定的级别格式化并记录消息。
-func (l *defaultLogger) logf(level enum.LogLevel, format string, args ...interface{}) {
-	l.mu.RLock() // Use RLock for read access to level
-	currentLevel := l.level
-	l.mu.RUnlock()
-
-	if level < currentLevel {
-		return // Message level is below the active logging level, so ignore it
-	}
-
-	// Prepare the log prefix with timestamp, level, and file/line info
-	prefix := fmt.Sprintf("%s [%s] ", time.Now().Format("2006-01-02 15:04:05.000"), level.String())
-
-	// Use the underlying standard logger to print the message with file/line info
-	// The standard logger's Lshortfile flag will automatically add file:line.
-	// We prepend our custom prefix.
-	l.logger.Printf(prefix+format, args...)
+// Infof logs a message at InfoLevel using the global logger.
+// Infof 使用全局日志记录器在 InfoLevel 记录一条消息。
+func Infof(format string, args ...interface{}) {
+	GetLogger().Infof(format, args...)
 }
 
-// Debug logs a message at the DEBUG level.
-func (l *defaultLogger) Debug(format string, args ...interface{}) {
-	l.logf(enum.LogLevel_DEBUG, format, args...)
+// Warnf logs a message at WarnLevel using the global logger.
+// Warnf 使用全局日志记录器在 WarnLevel 记录一条消息。
+func Warnf(format string, args ...interface{}) {
+	GetLogger().Warnf(format, args...)
 }
 
-// Info logs a message at the INFO level.
-func (l *defaultLogger) Info(format string, args ...interface{}) {
-	l.logf(enum.LogLevel_INFO, format, args...)
+// Errorf logs a message at ErrorLevel using the global logger.
+// Errorf 使用全局日志记录器在 ErrorLevel 记录一条消息。
+func Errorf(format string, args ...interface{}) {
+	GetLogger().Errorf(format, args...)
 }
 
-// Warn logs a message at the WARN level.
-func (l *defaultLogger) Warn(format string, args ...interface{}) {
-	l.logf(enum.LogLevel_WARN, format, args...)
+// Fatalf logs a message at FatalLevel using the global logger and exits.
+// Fatalf 使用全局日志记录器在 FatalLevel 记录一条消息并退出。
+func Fatalf(format string, args ...interface{}) {
+	GetLogger().Fatalf(format, args...)
 }
 
-// Error logs a message at the ERROR level.
-func (l *defaultLogger) Error(format string, args ...interface{}) {
-	l.logf(enum.LogLevel_ERROR, format, args...)
+// With creates a new logger instance derived from the global logger,
+// adding the specified key-value pairs as context.
+// With 从全局日志记录器派生出一个新的日志记录器实例，
+// 添加指定的键值对作为上下文。
+func With(args ...interface{}) Logger {
+	return GetLogger().With(args...)
 }
 
-// Fatal logs a message at the FATAL level, then exits the application.
-func (l *defaultLogger) Fatal(format string, args ...interface{}) {
-	l.logf(enum.LogLevel_FATAL, format, args...)
-	// For fatal errors, we should ensure all buffers are flushed and then exit.
-	// os.Exit(1) is standard for abnormal termination.
-	if l.file != nil {
-		_ = l.file.Sync() // Attempt to flush file buffer
-	}
+// --- No-op Logger Implementation ---
+// Implements the Logger interface but performs no actions.
+// --- 无操作日志记录器实现 ---
+// 实现 Logger 接口，但不执行任何操作。
+
+type noopLogger struct{}
+
+func (l *noopLogger) Debugf(format string, args ...interface{}) {}
+func (l *noopLogger) Infof(format string, args ...interface{})  {}
+func (l *noopLogger) Warnf(format string, args ...interface{})  {}
+func (l *noopLogger) Errorf(format string, args ...interface{}) {}
+func (l *noopLogger) Fatalf(format string, args ...interface{}) {
+	// Even a no-op logger should respect Fatal's exit behavior,
+	// though it won't log the message.
+	// 即使是无操作日志记录器也应遵守 Fatal 的退出行为，
+	// 尽管它不会记录消息。
 	os.Exit(1)
 }
-
-// SetLevel sets the current logging level.
-func (l *defaultLogger) SetLevel(level enum.LogLevel) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.level = level
-	l.Info("Log level changed to %s", level.String())
+func (l *noopLogger) With(args ...interface{}) Logger {
+	return l // Return self, as context is ignored // 返回自身，因为上下文被忽略
+}
+func (l *noopLogger) GetLevel() LogLevel {
+	return DisabledLevel // No-op implies disabled level // 无操作意味着禁用级别
 }
 
-// GetLevel returns the current logging level.
-func (l *defaultLogger) GetLevel() enum.LogLevel {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
+// --- Standard Library Logger Implementation ---
+// Provides a basic Logger implementation using Go's standard `log` package.
+// --- 标准库日志记录器实现 ---
+// 使用 Go 的标准 `log` 包提供基本的 Logger 实现。
+
+// stdLogger wraps the standard Go log.Logger.
+// stdLogger 包装标准的 Go log.Logger。
+type stdLogger struct {
+	stdlog *log.Logger // Underlying standard logger // 底层标准记录器
+	level  LogLevel    // Minimum level to log // 要记录的最低级别
+	// Store context added via With as key-value pairs
+	// 将通过 With 添加的上下文存储为键值对
+	context []interface{}
+}
+
+// NewStdLogger creates a new Logger instance that writes to os.Stderr
+// with the specified minimum logging level.
+// NewStdLogger 创建一个新的 Logger 实例，该实例使用指定的最低日志记录级别
+// 写入 os.Stderr。
+func NewStdLogger(level LogLevel) Logger {
+	// Default flags: Date, Time, Microseconds, Short file name (caller)
+	// 默认标志：日期、时间、微秒、短文件名（调用者）
+	flags := log.Ldate | log.Ltime | log.Lmicroseconds | log.Lshortfile
+	return &stdLogger{
+		stdlog: log.New(os.Stderr, "", flags),
+		level:  level,
+	}
+}
+
+// NewStdLoggerWithWriter creates a new Logger instance that writes to the specified writer.
+// NewStdLoggerWithWriter 创建一个新的 Logger 实例，该实例写入指定的写入器。
+func NewStdLoggerWithWriter(writer *os.File, level LogLevel) Logger {
+	flags := log.Ldate | log.Ltime | log.Lmicroseconds | log.Lshortfile
+	return &stdLogger{
+		stdlog: log.New(writer, "", flags),
+		level:  level,
+	}
+}
+
+// Helper to format context and message
+// 格式化上下文和消息的辅助函数
+func (l *stdLogger) formatMsg(levelStr string, format string, args ...interface{}) string {
+	msg := fmt.Sprintf(format, args...)
+	if len(l.context) == 0 {
+		return fmt.Sprintf("[%s] %s", levelStr, msg)
+	}
+
+	var ctxBuilder strings.Builder
+	ctxBuilder.WriteString("[") // Start context block // 开始上下文块
+	for i := 0; i < len(l.context); i += 2 {
+		key := l.context[i]
+		var val interface{} = "(MISSING)" // Placeholder if key only // 如果只有键则为占位符
+		if i+1 < len(l.context) {
+			val = l.context[i+1]
+		}
+		if i > 0 {
+			ctxBuilder.WriteString(" ") // Separator // 分隔符
+		}
+		// Simple formatting, escape strings if needed?
+		// 简单的格式化，如果需要是否转义字符串？
+		// Use %q for strings to handle spaces and special chars
+		// 对字符串使用 %q 来处理空格和特殊字符
+		if s, ok := val.(string); ok {
+			ctxBuilder.WriteString(fmt.Sprintf("%v=%q", key, s))
+		} else {
+			ctxBuilder.WriteString(fmt.Sprintf("%v=%v", key, val))
+		}
+
+	}
+	ctxBuilder.WriteString("]") // End context block // 结束上下文块
+	// Example: [INFO] Request received [reqID="abc" user=123]
+	// 示例：[INFO] Request received [reqID="abc" user=123]
+	return fmt.Sprintf("[%s] %s %s", levelStr, msg, ctxBuilder.String())
+}
+
+// log outputs the message if the level is sufficient. Calldepth is adjusted.
+// log 如果级别足够，则输出消息。调整 Calldepth。
+func (l *stdLogger) log(level LogLevel, levelStr string, format string, args ...interface{}) {
+	if l.level <= level {
+		// Calldepth 3: log() -> Debugf/Infof/... -> stdlog.Output()
+		// Calldepth 3: log() -> Debugf/Infof/... -> stdlog.Output()
+		l.stdlog.Output(3, l.formatMsg(levelStr, format, args...))
+	}
+}
+
+func (l *stdLogger) Debugf(format string, args ...interface{}) {
+	l.log(DebugLevel, "DEBUG", format, args...)
+}
+
+func (l *stdLogger) Infof(format string, args ...interface{}) {
+	l.log(InfoLevel, "INFO", format, args...)
+}
+
+func (l *stdLogger) Warnf(format string, args ...interface{}) {
+	l.log(WarnLevel, "WARN", format, args...)
+}
+
+func (l *stdLogger) Errorf(format string, args ...interface{}) {
+	l.log(ErrorLevel, "ERROR", format, args...)
+}
+
+func (l *stdLogger) Fatalf(format string, args ...interface{}) {
+	if l.level <= FatalLevel {
+		// Calldepth 3: Fatalf() -> stdlog.Output()
+		// Calldepth 3: Fatalf() -> stdlog.Output()
+		l.stdlog.Output(3, l.formatMsg("FATAL", format, args...))
+	}
+	os.Exit(1) // Exit regardless of level check, following Fatal contract // 无论级别检查如何都退出，遵循 Fatal 约定
+}
+
+func (l *stdLogger) With(args ...interface{}) Logger {
+	// Ensure args are key-value pairs (even length) - simple append here
+	// 确保 args 是键值对（偶数长度）- 这里简单追加
+	// A more robust implementation might validate keys are strings and length is even.
+	// 更健壮的实现可能会验证键是字符串且长度是偶数。
+	newContext := make([]interface{}, 0, len(l.context)+len(args))
+	newContext = append(newContext, l.context...)
+	newContext = append(newContext, args...)
+
+	// Return a *new* logger instance with the combined context
+	// 返回一个带有组合上下文的 *新* 日志记录器实例
+	// Share the underlying log.Logger and level, but copy context
+	// 共享底层的 log.Logger 和级别，但复制上下文
+	return &stdLogger{
+		stdlog:  l.stdlog,
+		level:   l.level,
+		context: newContext,
+	}
+}
+
+func (l *stdLogger) GetLevel() LogLevel {
 	return l.level
+}
+
+// --- Level Parsing ---
+// --- 级别解析 ---
+
+// StringToLevel converts a log level string (case-insensitive) to LogLevel.
+// Returns InfoLevel if the string is not recognized.
+// StringToLevel 将日志级别字符串（不区分大小写）转换为 LogLevel。
+// 如果字符串无法识别，则返回 InfoLevel。
+func StringToLevel(levelStr string) LogLevel {
+	switch strings.ToLower(strings.TrimSpace(levelStr)) {
+	case "debug":
+		return DebugLevel
+	case "info":
+		return InfoLevel
+	case "warn", "warning":
+		return WarnLevel
+	case "error":
+		return ErrorLevel
+	case "fatal":
+		return FatalLevel
+	case "disabled", "none", "": // Treat empty string as disabled // 将空字符串视为禁用
+		return DisabledLevel
+	default:
+		// Log a warning if an invalid level is provided?
+		// 如果提供了无效级别，是否记录警告？
+		// Using the default logger here might cause recursion if it's not set yet.
+		// 在此处使用默认记录器可能会导致递归（如果尚未设置）。
+		// fmt.Fprintf(os.Stderr, "Warning: Unrecognized log level '%s', defaulting to INFO\n", levelStr)
+		return InfoLevel // Default to Info if unrecognized // 如果无法识别，则默认为 Info
+	}
+}
+
+// LevelToString converts LogLevel to its string representation.
+// LevelToString 将 LogLevel 转换为其字符串表示形式。
+func LevelToString(level LogLevel) string {
+	switch level {
+	case DebugLevel:
+		return "DEBUG"
+	case InfoLevel:
+		return "INFO"
+	case WarnLevel:
+		return "WARN"
+	case ErrorLevel:
+		return "ERROR"
+	case FatalLevel:
+		return "FATAL"
+	case DisabledLevel:
+		return "DISABLED"
+	default:
+		return "UNKNOWN"
+	}
 }

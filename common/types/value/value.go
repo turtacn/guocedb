@@ -1,411 +1,784 @@
-// Package value defines the types used to represent SQL values within Guocedb.
-// This includes basic data types and their Go equivalents, as well as
-// potentially more complex types needed for the query execution engine.
-//
-// 此包定义了 Guocedb 中用于表示 SQL 值的类型。
-// 这包括基本数据类型及其 Go 语言的对应类型，以及
-// 查询执行引擎可能需要的更复杂类型。
 package value
 
 import (
+	"bytes"
+	"encoding/gob"
 	"fmt"
 	"strconv"
 	"time"
+
+	"github.com/turtacn/guocedb/common/errors"
+	"github.com/turtacn/guocedb/common/types/enum"
 )
 
-// Type represents the abstract type of a SQL value.
-// This is similar to MySQL data types but may have a more abstract representation internally.
-//
-// Type 表示 SQL 值的抽象类型。
-// 这类似于 MySQL 数据类型，但在内部可能具有更抽象的表示。
-type Type int
-
-const (
-	// TypeUnknown represents an unknown or unspecified SQL type.
-	// 未知或未指定的 SQL 类型。
-	TypeUnknown Type = iota
-	// TypeNull represents the NULL SQL value.
-	// NULL SQL 值。
-	TypeNull
-	// TypeBoolean represents the BOOLEAN SQL type.
-	// BOOLEAN SQL 类型。
-	TypeBoolean
-	// TypeTinyInt represents the TINYINT SQL type (8-bit signed integer).
-	// TINYINT SQL 类型（8 位有符号整数）。
-	TypeTinyInt
-	// TypeSmallInt represents the SMALLINT SQL type (16-bit signed integer).
-	// SMALLINT SQL 类型（16 位有符号整数）。
-	TypeSmallInt
-	// TypeInt represents the INT or INTEGER SQL type (32-bit signed integer).
-	// INT 或 INTEGER SQL 类型（32 位有符号整数）。
-	TypeInt
-	// TypeBigInt represents the BIGINT SQL type (64-bit signed integer).
-	// BIGINT SQL 类型（64 位有符号整数）。
-	TypeBigInt
-	// TypeFloat represents the FLOAT SQL type (single-precision floating-point number).
-	// FLOAT SQL 类型（单精度浮点数）。
-	TypeFloat
-	// TypeDouble represents the DOUBLE or REAL SQL type (double-precision floating-point number).
-	// DOUBLE 或 REAL SQL 类型（双精度浮点数）。
-	TypeDouble
-	// TypeText represents variable-length string data.
-	// 可变长度字符串数据。
-	TypeText
-	// TypeBlob represents binary large objects.
-	// 二进制大对象。
-	TypeBlob
-	// TypeDateTime represents the DATETIME SQL type.
-	// DATETIME SQL 类型。
-	TypeDateTime
-	// TypeDate represents the DATE SQL type.
-	// DATE SQL 类型。
-	TypeDate
-	// TypeTime represents the TIME SQL type.
-	// TIME SQL 类型。
-	TypeTime
-)
-
-// String returns the string representation of a Type.
-// String 方法返回 Type 的字符串表示。
-func (t Type) String() string {
-	switch t {
-	case TypeUnknown:
-		return "UNKNOWN"
-	case TypeNull:
-		return "NULL"
-	case TypeBoolean:
-		return "BOOLEAN"
-	case TypeTinyInt:
-		return "TINYINT"
-	case TypeSmallInt:
-		return "SMALLINT"
-	case TypeInt:
-		return "INT"
-	case TypeBigInt:
-		return "BIGINT"
-	case TypeFloat:
-		return "FLOAT"
-	case TypeDouble:
-		return "DOUBLE"
-	case TypeText:
-		return "TEXT"
-	case TypeBlob:
-		return "BLOB"
-	case TypeDateTime:
-		return "DATETIME"
-	case TypeDate:
-		return "DATE"
-	case TypeTime:
-		return "TIME"
-	default:
-		return fmt.Sprintf("UNKNOWN_TYPE(%d)", t)
-	}
-}
-
-// Value represents a SQL value. It holds the Go representation of the value
-// and its corresponding SQL type.
-//
-// Value 结构体表示一个 SQL 值。它持有该值的 Go 语言表示
-// 及其对应的 SQL 类型。
+// Value represents a single SQL value with its type.
+// It aims to be the primary internal representation for data manipulation and storage encoding.
+// Value represents a single SQL value with its type.
+// It aims to be the primary internal representation for data manipulation and storage encoding.
 type Value struct {
-	Type  Type
-	Value interface{}
+	typ enum.SQLDataType
+	val interface{} // Holds the actual Go value (e.g., int64, string, time.Time, []byte, nil)
 }
+
+// nullValue is a singleton representation for SQL NULL.
+// We use the type enum.SQLDataTypeNull and a nil val field primarily.
+// var nullValue = Value{typ: enum.SQLDataTypeNull, val: nil}
 
 // NewNull creates a new NULL Value.
-// NewNull 函数创建一个新的 NULL Value。
+// NewNull creates a new NULL Value.
 func NewNull() Value {
-	return Value{Type: TypeNull, Value: nil}
+	// return nullValue // Return the singleton
+	return Value{typ: enum.SQLDataTypeNull, val: nil}
 }
 
-// NewBoolean creates a new BOOLEAN Value.
-// NewBoolean 函数创建一个新的 BOOLEAN Value。
+// NewInt8 creates a new Int8 (TINYINT) Value.
+// NewInt8 creates a new Int8 (TINYINT) Value.
+func NewInt8(v int8) Value {
+	return Value{typ: enum.SQLDataTypeInt8, val: v}
+}
+
+// NewInt16 creates a new Int16 (SMALLINT) Value.
+// NewInt16 creates a new Int16 (SMALLINT) Value.
+func NewInt16(v int16) Value {
+	return Value{typ: enum.SQLDataTypeInt16, val: v}
+}
+
+// NewInt32 creates a new Int32 (INT) Value.
+// NewInt32 creates a new Int32 (INT) Value.
+func NewInt32(v int32) Value {
+	return Value{typ: enum.SQLDataTypeInt32, val: v}
+}
+
+// NewInt64 creates a new Int64 (BIGINT) Value.
+// NewInt64 creates a new Int64 (BIGINT) Value.
+func NewInt64(v int64) Value {
+	return Value{typ: enum.SQLDataTypeInt64, val: v}
+}
+
+// NewUint8 creates a new Uint8 (UNSIGNED TINYINT) Value.
+// NewUint8 creates a new Uint8 (UNSIGNED TINYINT) Value.
+func NewUint8(v uint8) Value {
+	return Value{typ: enum.SQLDataTypeUint8, val: v}
+}
+
+// NewUint16 creates a new Uint16 (UNSIGNED SMALLINT) Value.
+// NewUint16 creates a new Uint16 (UNSIGNED SMALLINT) Value.
+func NewUint16(v uint16) Value {
+	return Value{typ: enum.SQLDataTypeUint16, val: v}
+}
+
+// NewUint32 creates a new Uint32 (UNSIGNED INT) Value.
+// NewUint32 creates a new Uint32 (UNSIGNED INT) Value.
+func NewUint32(v uint32) Value {
+	return Value{typ: enum.SQLDataTypeUint32, val: v}
+}
+
+// NewUint64 creates a new Uint64 (UNSIGNED BIGINT) Value.
+// NewUint64 creates a new Uint64 (UNSIGNED BIGINT) Value.
+func NewUint64(v uint64) Value {
+	return Value{typ: enum.SQLDataTypeUint64, val: v}
+}
+
+// NewFloat32 creates a new Float32 (FLOAT) Value.
+// NewFloat32 creates a new Float32 (FLOAT) Value.
+func NewFloat32(v float32) Value {
+	return Value{typ: enum.SQLDataTypeFloat32, val: v}
+}
+
+// NewFloat64 creates a new Float64 (DOUBLE) Value.
+// NewFloat64 creates a new Float64 (DOUBLE) Value.
+func NewFloat64(v float64) Value {
+	return Value{typ: enum.SQLDataTypeFloat64, val: v}
+}
+
+// NewBoolean creates a new Boolean Value.
+// NewBoolean creates a new Boolean Value.
 func NewBoolean(v bool) Value {
-	return Value{Type: TypeBoolean, Value: v}
+	// Internally store as bool, can map to TINYINT(1) if needed for MySQL compat
+	// Internally store as bool, can map to TINYINT(1) if needed for MySQL compat
+	return Value{typ: enum.SQLDataTypeBoolean, val: v}
 }
 
-// NewTinyInt creates a new TINYINT Value.
-// NewTinyInt 函数创建一个新的 TINYINT Value。
-func NewTinyInt(v int8) Value {
-	return Value{Type: TypeTinyInt, Value: v}
+// NewString creates a new Varchar/Text Value.
+// NewString creates a new Varchar/Text Value.
+func NewString(v string) Value {
+	// We might differentiate between VARCHAR, CHAR, TEXT later if needed
+	// for specific padding or length constraints, but internally string is fine.
+	// We might differentiate between VARCHAR, CHAR, TEXT later if needed
+	// for specific padding or length constraints, but internally string is fine.
+	return Value{typ: enum.SQLDataTypeVarchar, val: v}
 }
 
-// NewSmallInt creates a new SMALLINT Value.
-// NewSmallInt 函数创建一个新的 SMALLINT Value。
-func NewSmallInt(v int16) Value {
-	return Value{Type: TypeSmallInt, Value: v}
-}
-
-// NewInt creates a new INT Value.
-// NewInt 函数创建一个新的 INT Value。
-func NewInt(v int32) Value {
-	return Value{Type: TypeInt, Value: v}
-}
-
-// NewBigInt creates a new BIGINT Value.
-// NewBigInt 函数创建一个新的 BIGINT Value。
-func NewBigInt(v int64) Value {
-	return Value{Type: TypeBigInt, Value: v}
-}
-
-// NewFloat creates a new FLOAT Value.
-// NewFloat 函数创建一个新的 FLOAT Value。
-func NewFloat(v float32) Value {
-	return Value{Type: TypeFloat, Value: v}
-}
-
-// NewDouble creates a new DOUBLE Value.
-// NewDouble 函数创建一个新的 DOUBLE Value。
-func NewDouble(v float64) Value {
-	return Value{Type: TypeDouble, Value: v}
-}
-
-// NewText creates a new TEXT Value.
-// NewText 函数创建一个新的 TEXT Value。
-func NewText(v string) Value {
-	return Value{Type: TypeText, Value: v}
-}
-
-// NewBlob creates a new BLOB Value.
-// NewBlob 函数创建一个新的 BLOB Value。
+// NewBlob creates a new Blob Value.
+// NewBlob creates a new Blob Value.
 func NewBlob(v []byte) Value {
-	return Value{Type: TypeBlob, Value: v}
+	// Store a copy to prevent external modification
+	// Store a copy to prevent external modification
+	c := make([]byte, len(v))
+	copy(c, v)
+	return Value{typ: enum.SQLDataTypeBlob, val: c}
 }
 
-// NewDateTime creates a new DATETIME Value.
-// It expects a time.Time value.
-// NewDateTime 函数创建一个新的 DATETIME Value。
-// 它期望一个 time.Time 类型的值。
-func NewDateTime(v time.Time) Value {
-	return Value{Type: TypeDateTime, Value: v}
-}
-
-// NewDate creates a new DATE Value.
-// It expects a time.Time value (only the date part will be relevant).
-// NewDate 函数创建一个新的 DATE Value。
-// 它期望一个 time.Time 类型的值（只有日期部分是相关的）。
+// NewDate creates a new Date Value.
+// NewDate creates a new Date Value.
 func NewDate(v time.Time) Value {
-	return Value{Type: TypeDate, Value: v}
+	// Store only year, month, day
+	// Store only year, month, day
+	year, month, day := v.Date()
+	dateOnly := time.Date(year, month, day, 0, 0, 0, 0, time.UTC) // Store in UTC
+	return Value{typ: enum.SQLDataTypeDate, val: dateOnly}
 }
 
-// NewTime creates a new TIME Value.
-// It expects a time.Time value (only the time part will be relevant).
-// NewTime 函数创建一个新的 TIME Value。
-// 它期望一个 time.Time 类型的值（只有时间部分是相关的）。
+// NewTime creates a new Time Value.
+// NewTime creates a new Time Value.
 func NewTime(v time.Time) Value {
-	return Value{Type: TypeTime, Value: v}
+	// Store duration since midnight or a specific representation
+	// Storing as time.Time for now, but only hour, min, sec, nsec matter.
+	// TODO: Define precise internal representation for TIME type (e.g., nanos since midnight)
+	// Storing as time.Time for now, but only hour, min, sec, nsec matter.
+	// TODO: Define precise internal representation for TIME type (e.g., nanos since midnight)
+	return Value{typ: enum.SQLDataTypeTime, val: v}
 }
 
-// AsBool attempts to convert the Value to a boolean.
-// Returns false and an error if the conversion is not possible.
-// AsBool 尝试将 Value 转换为布尔值。
-// 如果转换不可能，则返回 false 和一个错误。
-func (v Value) AsBool() (bool, error) {
-	if v.Type == TypeBoolean {
-		return v.Value.(bool), nil
-	}
-	if v.Type == TypeTinyInt || v.Type == TypeSmallInt || v.Type == TypeInt || v.Type == TypeBigInt {
-		return v.Value.(int64) != 0, nil
-	}
-	if v.Type == TypeFloat || v.Type == TypeDouble {
-		return v.Value.(float64) != 0, nil
-	}
-	if v.Type == TypeText {
-		s := strings.ToLower(v.Value.(string))
-		if s == "true" || s == "1" {
-			return true, nil
-		}
-		if s == "false" || s == "0" {
-			return false, nil
-		}
-	}
-	return false, fmt.Errorf("cannot convert %s to boolean", v.Type)
+// NewTimestamp creates a new Timestamp Value.
+// NewTimestamp creates a new Timestamp Value.
+func NewTimestamp(v time.Time) Value {
+	// Timestamps often depend on session timezone in MySQL, store as UTC internally
+	// Timestamps often depend on session timezone in MySQL, store as UTC internally
+	return Value{typ: enum.SQLDataTypeTimestamp, val: v.UTC()}
 }
 
-// AsInt64 attempts to convert the Value to an int64.
-// Returns 0 and an error if the conversion is not possible.
-// AsInt64 尝试将 Value 转换为 int64 类型。
-// 如果转换不可能，则返回 0 和一个错误。
-func (v Value) AsInt64() (int64, error) {
-	switch v.Type {
-	case TypeTinyInt:
-		return int64(v.Value.(int8)), nil
-	case TypeSmallInt:
-		return int64(v.Value.(int16)), nil
-	case TypeInt:
-		return int64(v.Value.(int32)), nil
-	case TypeBigInt:
-		return v.Value.(int64), nil
-	case TypeBoolean:
-		if v.Value.(bool) {
+// NewDateTime creates a new DateTime Value.
+// NewDateTime creates a new DateTime Value.
+func NewDateTime(v time.Time) Value {
+	// DATETIME is timezone-agnostic, store as is (but recommend UTC for consistency)
+	// DATETIME is timezone-agnostic, store as is (but recommend UTC for consistency)
+	return Value{typ: enum.SQLDataTypeDateTime, val: v}
+}
+
+// NewJSON creates a new JSON Value.
+// NewJSON creates a new JSON Value.
+func NewJSON(v []byte) Value {
+	// Assume input is valid JSON bytes, store as []byte
+	// Assume input is valid JSON bytes, store as []byte
+	c := make([]byte, len(v))
+	copy(c, v)
+	return Value{typ: enum.SQLDataTypeJSON, val: c}
+}
+
+// TODO: Add constructors for Decimal, Enum, Set when their internal representations are defined.
+// TODO: Add constructors for Decimal, Enum, Set when their internal representations are defined.
+
+// Type returns the SQL data type of the Value.
+// Type returns the SQL data type of the Value.
+func (v Value) Type() enum.SQLDataType {
+	return v.typ
+}
+
+// IsNull checks if the Value represents SQL NULL.
+// IsNull checks if the Value represents SQL NULL.
+func (v Value) IsNull() bool {
+	return v.typ == enum.SQLDataTypeNull
+}
+
+// Get returns the underlying Go value. Use with caution.
+// Get returns the underlying Go value. Use with caution.
+func (v Value) Get() interface{} {
+	return v.val
+}
+
+// Compare compares this Value with another Value.
+// It returns:
+// -1 if this value is less than other
+//
+//	0 if this value is equal to other
+//
+// +1 if this value is greater than other
+// An error if the types are incompatible for comparison.
+// SQL NULL comparison rules: NULL is considered less than any non-NULL value. NULL == NULL is false in SQL,
+// but for sorting/indexing purposes, we treat NULLs as equal and smaller than others.
+// Compare compares this Value with another Value.
+// It returns:
+// -1 if this value is less than other
+//
+//	0 if this value is equal to other
+//
+// +1 if this value is greater than other
+// An error if the types are incompatible for comparison.
+// SQL NULL comparison rules: NULL is considered less than any non-NULL value. NULL == NULL is false in SQL,
+// but for sorting/indexing purposes, we treat NULLs as equal and smaller than others.
+func (v Value) Compare(other Value) (int, error) {
+	// Handle NULLs first: NULLs sort before non-NULLs
+	// Handle NULLs first: NULLs sort before non-NULLs
+	if v.IsNull() {
+		if other.IsNull() {
+			return 0, nil // NULL == NULL for sorting
+		}
+		return -1, nil // NULL < non-NULL
+	}
+	if other.IsNull() {
+		return 1, nil // non-NULL > NULL
+	}
+
+	// TODO: Implement comprehensive comparison logic across compatible types.
+	// This requires handling type promotions (e.g., INT vs FLOAT).
+	// For now, implement basic same-type comparisons.
+	// TODO: Implement comprehensive comparison logic across compatible types.
+	// This requires handling type promotions (e.g., INT vs FLOAT).
+	// For now, implement basic same-type comparisons.
+
+	if v.typ != other.typ {
+		// Attempt numeric comparison if both are numeric
+		// Attempt numeric comparison if both are numeric
+		if v.isNumeric() && other.isNumeric() {
+			// Promote to float64 for comparison (simplistic approach)
+			// Promote to float64 for comparison (simplistic approach)
+			vf, errV := v.toFloat64()
+			if errV != nil {
+				return 0, errors.New(errors.ErrCodeComparison, fmt.Sprintf("cannot convert left value for comparison: %v", errV))
+			}
+			of, errO := other.toFloat64()
+			if errO != nil {
+				return 0, errors.New(errors.ErrCodeComparison, fmt.Sprintf("cannot convert right value for comparison: %v", errO))
+			}
+			if vf < of {
+				return -1, nil
+			}
+			if vf > of {
+				return 1, nil
+			}
+			return 0, nil
+		}
+
+		// Attempt string-like comparison
+		// Attempt string-like comparison
+		if v.isStringLike() && other.isStringLike() {
+			vs, errV := v.ToString()
+			if errV != nil {
+				return 0, errors.New(errors.ErrCodeComparison, fmt.Sprintf("cannot convert left value to string for comparison: %v", errV))
+			}
+			os, errO := other.ToString()
+			if errO != nil {
+				return 0, errors.New(errors.ErrCodeComparison, fmt.Sprintf("cannot convert right value to string for comparison: %v", errO))
+			}
+			if vs < os {
+				return -1, nil
+			}
+			if vs > os {
+				return 1, nil
+			}
+			return 0, nil
+		}
+
+		// Add other compatible type comparisons (e.g., DATE vs TIMESTAMP) if needed
+		// Add other compatible type comparisons (e.g., DATE vs TIMESTAMP) if needed
+
+		return 0, errors.New(errors.ErrCodeComparison, fmt.Sprintf("incompatible types for comparison: %s vs %s", v.typ, other.typ))
+	}
+
+	// Same type comparison
+	// Same type comparison
+	switch v.typ {
+	case enum.SQLDataTypeInt8:
+		vv, _ := v.val.(int8)
+		ov, _ := other.val.(int8)
+		if vv < ov {
+			return -1, nil
+		}
+		if vv > ov {
+			return 1, nil
+		}
+	case enum.SQLDataTypeInt16:
+		vv, _ := v.val.(int16)
+		ov, _ := other.val.(int16)
+		if vv < ov {
+			return -1, nil
+		}
+		if vv > ov {
+			return 1, nil
+		}
+	case enum.SQLDataTypeInt32:
+		vv, _ := v.val.(int32)
+		ov, _ := other.val.(int32)
+		if vv < ov {
+			return -1, nil
+		}
+		if vv > ov {
+			return 1, nil
+		}
+	case enum.SQLDataTypeInt64:
+		vv, _ := v.val.(int64)
+		ov, _ := other.val.(int64)
+		if vv < ov {
+			return -1, nil
+		}
+		if vv > ov {
+			return 1, nil
+		}
+	case enum.SQLDataTypeUint8:
+		vv, _ := v.val.(uint8)
+		ov, _ := other.val.(uint8)
+		if vv < ov {
+			return -1, nil
+		}
+		if vv > ov {
+			return 1, nil
+		}
+	case enum.SQLDataTypeUint16:
+		vv, _ := v.val.(uint16)
+		ov, _ := other.val.(uint16)
+		if vv < ov {
+			return -1, nil
+		}
+		if vv > ov {
+			return 1, nil
+		}
+	case enum.SQLDataTypeUint32:
+		vv, _ := v.val.(uint32)
+		ov, _ := other.val.(uint32)
+		if vv < ov {
+			return -1, nil
+		}
+		if vv > ov {
+			return 1, nil
+		}
+	case enum.SQLDataTypeUint64:
+		vv, _ := v.val.(uint64)
+		ov, _ := other.val.(uint64)
+		if vv < ov {
+			return -1, nil
+		}
+		if vv > ov {
+			return 1, nil
+		}
+	case enum.SQLDataTypeFloat32:
+		vv, _ := v.val.(float32)
+		ov, _ := other.val.(float32)
+		if vv < ov {
+			return -1, nil
+		}
+		if vv > ov {
+			return 1, nil
+		}
+	case enum.SQLDataTypeFloat64:
+		vv, _ := v.val.(float64)
+		ov, _ := other.val.(float64)
+		if vv < ov {
+			return -1, nil
+		}
+		if vv > ov {
+			return 1, nil
+		}
+	case enum.SQLDataTypeBoolean:
+		vv, _ := v.val.(bool)
+		ov, _ := other.val.(bool)
+		// false < true
+		// false < true
+		if !vv && ov {
+			return -1, nil
+		}
+		if vv && !ov {
+			return 1, nil
+		}
+	case enum.SQLDataTypeVarchar, enum.SQLDataTypeChar, enum.SQLDataTypeText, enum.SQLDataTypeEnum, enum.SQLDataTypeSet:
+		vv, _ := v.val.(string)
+		ov, _ := other.val.(string)
+		if vv < ov {
+			return -1, nil
+		}
+		if vv > ov {
+			return 1, nil
+		}
+	case enum.SQLDataTypeBlob:
+		vv, _ := v.val.([]byte)
+		ov, _ := other.val.([]byte)
+		// Byte-wise comparison
+		// Byte-wise comparison
+		return compareBytes(vv, ov), nil
+	case enum.SQLDataTypeDate, enum.SQLDataTypeTime, enum.SQLDataTypeTimestamp, enum.SQLDataTypeDateTime:
+		vv, okV := v.val.(time.Time)
+		ov, okO := other.val.(time.Time)
+		if !okV || !okO {
+			return 0, errors.New(errors.ErrCodeInternal, "internal error: time value is not time.Time")
+		}
+		if vv.Before(ov) {
+			return -1, nil
+		}
+		if vv.After(ov) {
+			return 1, nil
+		}
+	case enum.SQLDataTypeJSON:
+		// JSON comparison is complex. For simple equality check, compare bytes.
+		// For ordering, SQL typically doesn't define cross-JSON value order.
+		// TODO: Define JSON comparison semantics if needed beyond equality.
+		// JSON comparison is complex. For simple equality check, compare bytes.
+		// For ordering, SQL typically doesn't define cross-JSON value order.
+		// TODO: Define JSON comparison semantics if needed beyond equality.
+		vv, _ := v.val.([]byte)
+		ov, _ := other.val.([]byte)
+		return compareBytes(vv, ov), nil
+	// case enum.SQLDataTypeDecimal:
+	// TODO: Implement Decimal comparison
+	// TODO: Implement Decimal comparison
+	default:
+		return 0, errors.New(errors.ErrCodeInternal, fmt.Sprintf("comparison not implemented for type %s", v.typ))
+	}
+
+	return 0, nil // Values are equal
+}
+
+// ToString attempts to convert the Value to its string representation.
+// ToString attempts to convert the Value to its string representation.
+func (v Value) ToString() (string, error) {
+	if v.IsNull() {
+		return "NULL", nil // Or maybe "" depending on desired behavior? SQL usually shows NULL.
+		// Or maybe "" depending on desired behavior? SQL usually shows NULL.
+	}
+
+	switch v.typ {
+	case enum.SQLDataTypeVarchar, enum.SQLDataTypeChar, enum.SQLDataTypeText, enum.SQLDataTypeEnum, enum.SQLDataTypeSet:
+		return v.val.(string), nil
+	case enum.SQLDataTypeInt8:
+		return strconv.FormatInt(int64(v.val.(int8)), 10), nil
+	case enum.SQLDataTypeInt16:
+		return strconv.FormatInt(int64(v.val.(int16)), 10), nil
+	case enum.SQLDataTypeInt32:
+		return strconv.FormatInt(int64(v.val.(int32)), 10), nil
+	case enum.SQLDataTypeInt64:
+		return strconv.FormatInt(v.val.(int64), 10), nil
+	case enum.SQLDataTypeUint8:
+		return strconv.FormatUint(uint64(v.val.(uint8)), 10), nil
+	case enum.SQLDataTypeUint16:
+		return strconv.FormatUint(uint64(v.val.(uint16)), 10), nil
+	case enum.SQLDataTypeUint32:
+		return strconv.FormatUint(uint64(v.val.(uint32)), 10), nil
+	case enum.SQLDataTypeUint64:
+		return strconv.FormatUint(v.val.(uint64), 10), nil
+	case enum.SQLDataTypeFloat32:
+		return strconv.FormatFloat(float64(v.val.(float32)), 'f', -1, 32), nil
+	case enum.SQLDataTypeFloat64:
+		return strconv.FormatFloat(v.val.(float64), 'f', -1, 64), nil
+	case enum.SQLDataTypeBoolean:
+		if v.val.(bool) {
+			return "1", nil // Or "true"
+		}
+		return "0", nil // Or "false"
+	case enum.SQLDataTypeBlob:
+		// Represent blob as hex string? Or base64? Or just indicate <blob>?
+		// Represent blob as hex string? Or base64? Or just indicate <blob>?
+		return fmt.Sprintf("0x%X", v.val.([]byte)), nil // Hex representation
+	case enum.SQLDataTypeDate:
+		return v.val.(time.Time).Format("2006-01-02"), nil
+	case enum.SQLDataTypeTime:
+		// TODO: Format TIME correctly (HH:MM:SS.ffffff)
+		// TODO: Format TIME correctly (HH:MM:SS.ffffff)
+		return v.val.(time.Time).Format("15:04:05.999999"), nil
+	case enum.SQLDataTypeTimestamp:
+		// Format timestamp, potentially considering session timezone later
+		// Format timestamp, potentially considering session timezone later
+		return v.val.(time.Time).Format("2006-01-02 15:04:05.999999"), nil // Assumes UTC for now
+	case enum.SQLDataTypeDateTime:
+		return v.val.(time.Time).Format("2006-01-02 15:04:05.999999"), nil
+	case enum.SQLDataTypeJSON:
+		// Return JSON as string
+		// Return JSON as string
+		return string(v.val.([]byte)), nil
+	// case enum.SQLDataTypeDecimal:
+	// TODO: Implement Decimal string conversion
+	// TODO: Implement Decimal string conversion
+	default:
+		return "", errors.New(errors.ErrCodeInternal, fmt.Sprintf("string conversion not implemented for type %s", v.typ))
+	}
+}
+
+// ToInt64 attempts to convert the Value to an int64.
+// ToInt64 attempts to convert the Value to an int64.
+func (v Value) ToInt64() (int64, error) {
+	if v.IsNull() {
+		return 0, errors.New(errors.ErrCodeConversion, "cannot convert NULL to int64")
+	}
+
+	switch v.typ {
+	case enum.SQLDataTypeInt8:
+		return int64(v.val.(int8)), nil
+	case enum.SQLDataTypeInt16:
+		return int64(v.val.(int16)), nil
+	case enum.SQLDataTypeInt32:
+		return int64(v.val.(int32)), nil
+	case enum.SQLDataTypeInt64:
+		return v.val.(int64), nil
+	case enum.SQLDataTypeUint8:
+		// Check for overflow? For now, allow direct cast.
+		// Check for overflow? For now, allow direct cast.
+		return int64(v.val.(uint8)), nil
+	case enum.SQLDataTypeUint16:
+		return int64(v.val.(uint16)), nil
+	case enum.SQLDataTypeUint32:
+		// Check for overflow
+		// Check for overflow
+		uval := v.val.(uint32)
+		if uval > uint32(^uint64(0)>>1) { // Check if > max int64
+			return 0, errors.New(errors.ErrCodeConversion, fmt.Sprintf("uint32 value %d overflows int64", uval))
+		}
+		return int64(uval), nil
+	case enum.SQLDataTypeUint64:
+		// Check for overflow
+		// Check for overflow
+		uval := v.val.(uint64)
+		if uval > uint64(^uint64(0)>>1) { // Check if > max int64
+			return 0, errors.New(errors.ErrCodeConversion, fmt.Sprintf("uint64 value %d overflows int64", uval))
+		}
+		return int64(uval), nil
+	case enum.SQLDataTypeFloat32:
+		// Truncate decimal part
+		// Truncate decimal part
+		return int64(v.val.(float32)), nil
+	case enum.SQLDataTypeFloat64:
+		// Truncate decimal part
+		// Truncate decimal part
+		return int64(v.val.(float64)), nil
+	case enum.SQLDataTypeBoolean:
+		if v.val.(bool) {
 			return 1, nil
 		}
 		return 0, nil
-	case TypeFloat:
-		return int64(v.Value.(float32)), nil
-	case TypeDouble:
-		return int64(v.Value.(float64)), nil
-	case TypeText:
-		i, err := strconv.ParseInt(v.Value.(string), 10, 64)
+	case enum.SQLDataTypeVarchar, enum.SQLDataTypeChar, enum.SQLDataTypeText:
+		// Attempt to parse string as integer
+		// Attempt to parse string as integer
+		i, err := strconv.ParseInt(v.val.(string), 10, 64)
 		if err != nil {
-			return 0, fmt.Errorf("cannot convert text '%s' to int64: %w", v.Value.(string), err)
+			// Try parsing as float first for cases like "1.0"
+			// Try parsing as float first for cases like "1.0"
+			f, ferr := strconv.ParseFloat(v.val.(string), 64)
+			if ferr == nil {
+				return int64(f), nil
+			}
+			return 0, errors.New(errors.ErrCodeConversion, fmt.Sprintf("cannot convert string '%s' to int64: %v", v.val.(string), err))
 		}
 		return i, nil
+	// case enum.SQLDataTypeDecimal:
+	// TODO: Implement Decimal to Int64 conversion
+	// TODO: Implement Decimal to Int64 conversion
 	default:
-		return 0, fmt.Errorf("cannot convert %s to int64", v.Type)
+		return 0, errors.New(errors.ErrCodeConversion, fmt.Sprintf("cannot convert type %s to int64", v.typ))
 	}
 }
 
-// AsFloat64 attempts to convert the Value to a float64.
-// Returns 0 and an error if the conversion is not possible.
-// AsFloat64 尝试将 Value 转换为 float64 类型。
-// 如果转换不可能，则返回 0 和一个错误。
-func (v Value) AsFloat64() (float64, error) {
-	switch v.Type {
-	case TypeTinyInt:
-		return float64(v.Value.(int8)), nil
-	case TypeSmallInt:
-		return float64(v.Value.(int16)), nil
-	case TypeInt:
-		return float64(v.Value.(int32)), nil
-	case TypeBigInt:
-		return float64(v.Value.(int64)), nil
-	case TypeFloat:
-		return float64(v.Value.(float32)), nil
-	case TypeDouble:
-		return v.Value.(float64), nil
-	case TypeBoolean:
-		if v.Value.(bool) {
+// TODO: Implement other conversion methods as needed:
+// ToUint64(), ToFloat64(), ToBool(), ToBytes(), ToTime(), ToDecimal() etc.
+// TODO: Implement other conversion methods as needed:
+// ToUint64(), ToFloat64(), ToBool(), ToBytes(), ToTime(), ToDecimal() etc.
+
+// isNumeric checks if the value type is considered numeric.
+// isNumeric checks if the value type is considered numeric.
+func (v Value) isNumeric() bool {
+	switch v.typ {
+	case enum.SQLDataTypeInt8, enum.SQLDataTypeInt16, enum.SQLDataTypeInt32, enum.SQLDataTypeInt64,
+		enum.SQLDataTypeUint8, enum.SQLDataTypeUint16, enum.SQLDataTypeUint32, enum.SQLDataTypeUint64,
+		enum.SQLDataTypeFloat32, enum.SQLDataTypeFloat64, enum.SQLDataTypeDecimal, enum.SQLDataTypeBoolean: // Bool often treated as 0/1
+		return true
+	default:
+		return false
+	}
+}
+
+// isStringLike checks if the value type can be reasonably treated as a string.
+// isStringLike checks if the value type can be reasonably treated as a string.
+func (v Value) isStringLike() bool {
+	switch v.typ {
+	case enum.SQLDataTypeVarchar, enum.SQLDataTypeChar, enum.SQLDataTypeText, enum.SQLDataTypeEnum, enum.SQLDataTypeSet:
+		return true
+	default:
+		return false
+	}
+}
+
+// toFloat64 is a helper for comparisons, converting numeric types to float64.
+// toFloat64 is a helper for comparisons, converting numeric types to float64.
+func (v Value) toFloat64() (float64, error) {
+	if v.IsNull() {
+		// Should have been handled by caller, but return error for safety
+		// Should have been handled by caller, but return error for safety
+		return 0, errors.New(errors.ErrCodeConversion, "cannot convert NULL to float64")
+	}
+
+	switch v.typ {
+	case enum.SQLDataTypeInt8:
+		return float64(v.val.(int8)), nil
+	case enum.SQLDataTypeInt16:
+		return float64(v.val.(int16)), nil
+	case enum.SQLDataTypeInt32:
+		return float64(v.val.(int32)), nil
+	case enum.SQLDataTypeInt64:
+		return float64(v.val.(int64)), nil
+	case enum.SQLDataTypeUint8:
+		return float64(v.val.(uint8)), nil
+	case enum.SQLDataTypeUint16:
+		return float64(v.val.(uint16)), nil
+	case enum.SQLDataTypeUint32:
+		return float64(v.val.(uint32)), nil
+	case enum.SQLDataTypeUint64:
+		// Potential precision loss for very large uint64
+		// Potential precision loss for very large uint64
+		return float64(v.val.(uint64)), nil
+	case enum.SQLDataTypeFloat32:
+		return float64(v.val.(float32)), nil
+	case enum.SQLDataTypeFloat64:
+		return v.val.(float64), nil
+	case enum.SQLDataTypeBoolean:
+		if v.val.(bool) {
 			return 1.0, nil
 		}
 		return 0.0, nil
-	case TypeText:
-		f, err := strconv.ParseFloat(v.Value.(string), 64)
-		if err != nil {
-			return 0, fmt.Errorf("cannot convert text '%s' to float64: %w", v.Value.(string), err)
-		}
-		return f, nil
+	// case enum.SQLDataTypeDecimal:
+	// TODO: Implement Decimal to Float64 conversion
+	// TODO: Implement Decimal to Float64 conversion
 	default:
-		return 0, fmt.Errorf("cannot convert %s to float64", v.Type)
+		return 0, errors.New(errors.ErrCodeConversion, fmt.Sprintf("cannot convert type %s to float64", v.typ))
 	}
 }
 
-// AsString attempts to convert the Value to a string.
-// Returns an empty string and an error if the conversion is not possible.
-// AsString 尝试将 Value 转换为字符串类型。
-// 如果转换不可能，则返回空字符串和一个错误。
-func (v Value) AsString() (string, error) {
-	switch v.Type {
-	case TypeNull:
-		return "", nil
-	case TypeBoolean:
-		return strconv.FormatBool(v.Value.(bool)), nil
-	case TypeTinyInt:
-		return strconv.FormatInt(int64(v.Value.(int8)), 10), nil
-	case TypeSmallInt:
-		return strconv.FormatInt(int64(v.Value.(int16)), 10), nil
-	case TypeInt:
-		return strconv.FormatInt(int64(v.Value.(int32)), 10), nil
-	case TypeBigInt:
-		return strconv.FormatInt(v.Value.(int64), 10), nil
-	case TypeFloat:
-		return strconv.FormatFloat(float64(v.Value.(float32)), 'g', -1, 32), nil
-	case TypeDouble:
-		return strconv.FormatFloat(v.Value.(float64), 'g', -1, 64), nil
-	case TypeText:
-		return v.Value.(string), nil
-	case TypeBlob:
-		return string(v.Value.([]byte)), nil // Be cautious with large blobs as strings
-	case TypeDateTime:
-		return v.Value.(time.Time).Format(time.RFC3339), nil // Or a more MySQL-like format
-	case TypeDate:
-		return v.Value.(time.Time).Format("2006-01-02"), nil
-	case TypeTime:
-		return v.Value.(time.Time).Format("15:04:05"), nil
-	default:
-		return "", fmt.Errorf("cannot convert %s to string", v.Type)
+// compareBytes performs lexicographical comparison of two byte slices.
+// compareBytes performs lexicographical comparison of two byte slices.
+func compareBytes(a, b []byte) int {
+	minLen := len(a)
+	if len(b) < minLen {
+		minLen = len(b)
 	}
+	for i := 0; i < minLen; i++ {
+		if a[i] < b[i] {
+			return -1
+		}
+		if a[i] > b[i] {
+			return 1
+		}
+	}
+	if len(a) < len(b) {
+		return -1
+	}
+	if len(a) > len(b) {
+		return 1
+	}
+	return 0
 }
 
-// AsTime attempts to convert the Value to a time.Time.
-// The interpretation depends on the underlying SQL type.
-// Returns the zero time and an error if the conversion is not possible.
-// AsTime 尝试将 Value 转换为 time.Time 类型。
-// 具体的解释取决于底层的 SQL 类型。
-// 如果转换不可能，则返回零时间和错误。
-func (v Value) AsTime() (time.Time, error) {
-	switch v.Type {
-	case TypeDateTime:
-		return v.Value.(time.Time), nil
-	case TypeDate:
-		return v.Value.(time.Time), nil
-	case TypeTime:
-		return v.Value.(time.Time), nil
-	case TypeText:
-		// Attempt to parse from common formats, adjust as needed
-		formats := []string{
-			time.RFC3339,
-			"2006-01-02",
-			"15:04:05",
-			"2006-01-02 15:04:05",
-		}
-		s := v.Value.(string)
-		for _, format := range formats {
-			t, err := time.Parse(format, s)
-			if err == nil {
-				return t, nil
-			}
-		}
-		return time.Time{}, fmt.Errorf("cannot parse text '%s' as time", s)
-	default:
-		return time.Time{}, fmt.Errorf("cannot convert %s to time", v.Type)
+// MarshalBinary implements the encoding.BinaryMarshaler interface.
+// Uses gob encoding for simplicity. This is NOT suitable for sortable keys.
+// MarshalBinary implements the encoding.BinaryMarshaler interface.
+// Uses gob encoding for simplicity. This is NOT suitable for sortable keys.
+func (v Value) MarshalBinary() ([]byte, error) {
+	// Need to register concrete types used in interface{} with gob
+	// This should ideally happen once at init time
+	// Need to register concrete types used in interface{} with gob
+	// This should ideally happen once at init time
+	registerGobTypes()
+
+	// Use a custom struct for gob encoding to handle the interface{} field
+	// Use a custom struct for gob encoding to handle the interface{} field
+	type gobValue struct {
+		Typ enum.SQLDataType
+		Val interface{}
 	}
+	gv := gobValue{Typ: v.typ, Val: v.val}
+
+	var buf bytes.Buffer
+	encoder := gob.NewEncoder(&buf)
+	if err := encoder.Encode(gv); err != nil {
+		return nil, errors.Wrap(err, errors.ErrCodeSerialization, "failed to gob encode Value")
+	}
+	return buf.Bytes(), nil
 }
 
-// Equals checks if this Value is equal to another Value.
-// It performs type-aware comparison.
-// Equals 方法检查此 Value 是否等于另一个 Value。
-// 它执行类型感知的比较。
-func (v Value) Equals(other Value) bool {
-	if v.Type != other.Type {
-		return false
+// UnmarshalBinary implements the encoding.BinaryUnmarshaler interface.
+// UnmarshalBinary implements the encoding.BinaryUnmarshaler interface.
+func (v *Value) UnmarshalBinary(data []byte) error {
+	registerGobTypes()
+
+	type gobValue struct {
+		Typ enum.SQLDataType
+		Val interface{}
 	}
-	switch v.Type {
-	case TypeNull:
-		return true
-	case TypeBoolean:
-		return v.Value.(bool) == other.Value.(bool)
-	case TypeTinyInt:
-		return v.Value.(int8) == other.Value.(int8)
-	case TypeSmallInt:
-		return v.Value.(int16) == other.Value.(int16)
-	case TypeInt:
-		return v.Value.(int32) == other.Value.(int32)
-	case TypeBigInt:
-		return v.Value.(int64) == other.Value.(int64)
-	case TypeFloat:
-		return v.Value.(float32) == other.Value.(float32)
-	case TypeDouble:
-		return v.Value.(float64) == other.Value.(float64)
-	case TypeText:
-		return v.Value.(string) == other.Value.(string)
-	case TypeBlob:
-		b1 := v.Value.([]byte)
-		b2 := other.Value.([]byte)
-		if len(b1) != len(b2) {
-			return false
-		}
-		for i := range b1 {
-			if b1[i] != b2[i] {
-				return false
-			}
-		}
-		return true
-	case TypeDateTime, TypeDate, TypeTime:
-		t1 := v.Value.(time.Time)
-		t2 := other.Value.(time.Time)
-		return t1.Equal(t2)
-	default:
-		return false
+	var gv gobValue
+
+	decoder := gob.NewDecoder(bytes.NewReader(data))
+	if err := decoder.Decode(&gv); err != nil {
+		return errors.Wrap(err, errors.ErrCodeSerialization, "failed to gob decode Value")
 	}
+
+	v.typ = gv.Typ
+	v.val = gv.Val
+	return nil
 }
+
+// --- Gob Registration ---
+// --- Gob Registration ---
+
+var gobTypesRegistered = false
+
+func registerGobTypes() {
+	if gobTypesRegistered {
+		return
+	}
+	// Register all concrete types that might be stored in Value.val interface{}
+	// Register all concrete types that might be stored in Value.val interface{}
+	gob.Register(int8(0))
+	gob.Register(int16(0))
+	gob.Register(int32(0))
+	gob.Register(int64(0))
+	gob.Register(uint8(0))
+	gob.Register(uint16(0))
+	gob.Register(uint32(0))
+	gob.Register(uint64(0))
+	gob.Register(float32(0))
+	gob.Register(float64(0))
+	gob.Register(false)
+	gob.Register("")
+	gob.Register([]byte{})
+	gob.Register(time.Time{})
+	// Register nil explicitly? Gob handles nil interfaces, but explicit registration might be safer.
+	// gob.Register(nil)
+	// TODO: Register Decimal, Enum, Set types when defined.
+	// TODO: Register Decimal, Enum, Set types when defined.
+
+	gobTypesRegistered = true
+}
+
+// String provides a human-readable representation of the Value, mainly for debugging.
+// Use ToString() for SQL-like string conversion.
+// String provides a human-readable representation of the Value, mainly for debugging.
+// Use ToString() for SQL-like string conversion.
+func (v Value) String() string {
+	if v.IsNull() {
+		return "NULL"
+	}
+	// Use ToString for consistency in simple cases, fallback for others
+	// Use ToString for consistency in simple cases, fallback for others
+	str, err := v.ToString()
+	if err == nil {
+		// Quote string-like types for clarity in debugging
+		// Quote string-like types for clarity in debugging
+		if v.isStringLike() || v.typ == enum.SQLDataTypeJSON {
+			return strconv.Quote(str)
+		}
+		if v.typ == enum.SQLDataTypeBlob {
+			// Use the hex representation from ToString
+			// Use the hex representation from ToString
+			return str
+		}
+		return str
+	}
+	// Fallback for types without simple ToString or on error
+	// Fallback for types without simple ToString or on error
+	return fmt.Sprintf("%s(%v)", v.typ, v.val)
+}
+
+// Note: EncodeSortable and DecodeSortable methods are intentionally omitted here.
+// They belong in the storage encoding layer (e.g., storage/engines/badger/encoding.go)
+// because the sortable format is highly specific to the storage requirements (like Badger keys)
+// and often needs context (like whether it's ascending/descending, part of a composite key).
+// Keeping Value itself focused on representing the typed value and basic operations.
+// Note: EncodeSortable and DecodeSortable methods are intentionally omitted here.
+// They belong in the storage encoding layer (e.g., storage/engines/badger/encoding.go)
+// because the sortable format is highly specific to the storage requirements (like Badger keys)
+// and often needs context (like whether it's ascending/descending, part of a composite key).
+// Keeping Value itself focused on representing the typed value and basic operations.
