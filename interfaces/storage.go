@@ -664,10 +664,10 @@ type IntegrityReport struct {
 type IntegrityStatus int
 
 const (
-	IntegrityOK        IntegrityStatus = iota // 正常 OK
-	IntegrityWarning                          // 警告 Warning
-	IntegrityError                            // 错误 Error
-	IntegrityCorrupted                        // 损坏 Corrupted
+	IntegrityStatusOK        IntegrityStatus = iota // 正常 OK
+	IntegrityStatusWarning                          // 警告 Warning
+	IntegrityStatusError                            // 错误 Error
+	IntegrityStatusCorrupted                        // 损坏 Corrupted
 )
 
 // IntegrityError 完整性错误
@@ -1449,7 +1449,7 @@ var (
 	ErrTransactionNotActive  = errors.NewError(errors.ErrCodeInvalidState, "Transaction not active")
 	ErrTransactionReadOnly   = errors.NewError(errors.ErrCodePermissionDenied, "Transaction is read-only")
 	ErrDeadlockDetected      = errors.NewError(errors.ErrCodeDeadlock, "Deadlock detected")
-	ErrLockTimeout           = errors.NewError(errors.ErrCodeTimeout, "Lock timeout")
+	ErrLockTimeout           = errors.NewError(errors.ErrCodeLockTimeout, "Lock timeout")
 	ErrIteratorClosed        = errors.NewError(errors.ErrCodeInvalidState, "Iterator is closed")
 	ErrInvalidSchema         = errors.NewError(errors.ErrCodeInvalidParameter, "Invalid schema")
 	ErrSchemaVersionMismatch = errors.NewError(errors.ErrCodeVersionMismatch, "Schema version mismatch")

@@ -508,6 +508,13 @@ const (
 	IndexesTable = "indexes"
 )
 
+// TODO
+const (
+	DefaultCharset  = "utf8mb4"
+	DefaultCollate  = "utf8mb4_general_ci"
+	DefaultTimeZone = "Asia%2FShanghai"
+)
+
 // HTTP状态码映射
 // HTTP status code mapping
 var HTTPStatusMapping = map[int]string{

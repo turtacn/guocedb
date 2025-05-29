@@ -140,6 +140,7 @@ const (
 	ErrCodeTransactionConflict ErrorCode = 4006 // 事务冲突 Transaction conflict
 	ErrCodeLockTimeout         ErrorCode = 4007 // 锁超时 Lock timeout
 	ErrCodeDeadlock            ErrorCode = 4008 // 死锁 Deadlock
+	ErrCodeFileNotFound        ErrorCode = 4009
 
 	// 认证错误码 (5000-5999)
 	// Authentication error codes (5000-5999)
@@ -170,6 +171,16 @@ const (
 	ErrCodeOperationTimeout ErrorCode = 8000 // 操作超时 Operation timeout
 	ErrCodeQueryTimeout     ErrorCode = 8001 // 查询超时 Query timeout
 	ErrCodeRequestTimeout   ErrorCode = 8002 // 请求超时 Request timeout
+
+	// TODO: others
+	ErrCodeNotSupported     ErrorCode = 9001
+	ErrCodeNotFound         ErrorCode = 9002
+	ErrCodeAlreadyExists    ErrorCode = 9003
+	ErrCodeInvalidState     ErrorCode = 9004
+	ErrCodePermissionDenied ErrorCode = 9005
+	ErrCodeVersionMismatch  ErrorCode = 9006
+	ErrCodeQuotaExceeded    ErrorCode = 9007
+	ErrCodeDataCorruption   ErrorCode = 9008
 )
 
 // String 返回错误码的字符串表示

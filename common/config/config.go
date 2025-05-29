@@ -1144,17 +1144,17 @@ func (c *Config) EnsureDirectories() error {
 // GetConnectionString gets connection string
 func (c *Config) GetConnectionString() string {
 	if c.Network == nil {
-		return fmt.Sprintf("%s:%d", constants.DefaultHost, constants.DefaultPort)
+		return fmt.Sprintf("%s:%d", constants.DefaultBindAddress, constants.DefaultMySQLPort)
 	}
 
 	host := c.Network.Host
 	if host == "" {
-		host = constants.DefaultHost
+		host = constants.DefaultBindAddress
 	}
 
 	port := c.Network.Port
 	if port == 0 {
-		port = constants.DefaultPort
+		port = constants.DefaultMySQLPort
 	}
 
 	return fmt.Sprintf("%s:%d", host, port)
