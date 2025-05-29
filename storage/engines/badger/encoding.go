@@ -1,656 +1,342 @@
+// Package badger implements the BadgerDB specific encoding and decoding strategies for Guocedb.
+// This file is responsible for converting SQL value types handled by the compute layer
+// (defined in common/types/value/value.go) into byte arrays suitable for BadgerDB storage, and vice-versa.
+// It relies on common/types/value/value.go for type conversion and internal/encoding/encoding.go
+// for some general encoding utilities. It is core to Badger engine's ability to correctly read and write data.
 package badger
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
+	"io"
 	"time"
 
-	"github.com/dolthub/go-mysql-server/sql" // For sql.Type and potentially sql.Row structure
-
-	"github.com/turtacn/guocedb/common/errors" // Core sortable encoding functions
-	"github.com/turtacn/guocedb/interfaces"    // For Schema, ColumnDefinition, IndexDefinition
+	"github.com/turtacn/guocedb/common/errors"
+	"github.com/turtacn/guocedb/common/types/enum"
+	"github.com/turtacn/guocedb/common/types/value"
+	"github.com/turtacn/guocedb/interfaces" // For interfaces.ID, interfaces.RowID, interfaces.ColumnID
 	"github.com/turtacn/guocedb/internal/encoding"
-	// "guocedb/common/types/value" // If you have a custom value type system, import it here.
-	// For now, we'll work with interface{} and sql.Type.
 )
 
-// Define Badger key prefixes to separate different data categories.
-// These ensure that keys for different types of data don't collide and
-// allow for efficient prefix scans.
+// KeyTypePrefix defines prefixes for different key types in BadgerDB.
+// This helps in distinguishing between different kinds of data stored in BadgerDB.
+type KeyTypePrefix byte
+
 const (
-	// MetaPrefix is used for all metadata keys (DBs, Tables, Indexes, Sequences, Name mappings).
-	MetaPrefix byte = 0x01
-	// TableDataPrefix is used for keys storing actual table row data.
-	TableDataPrefix byte = 0x02
-	// IndexDataPrefix is used for keys storing index entries.
-	IndexDataPrefix byte = 0x03
-
-	// --- Meta Sub-types ---
-	// Used within MetaPrefix keys to distinguish different kinds of metadata.
-	metaSequenceTag byte = 's' // Sequence counters (e.g., for generating IDs)
-	metaDbTag       byte = 'd' // Database metadata marker
-	metaTableTag    byte = 't' // Table metadata marker (schema)
-	metaIndexTag    byte = 'i' // Index metadata marker (definition)
-	metaNameMapTag  byte = 'n' // Name-to-ID mapping marker
-
-	// --- Sequence Types ---
-	// Used with metaSequenceTag.
-	seqTypeDatabase byte = 'D' // Sequence for Database IDs
-	seqTypeTable    byte = 'T' // Sequence for Table IDs (per DB)
-	seqTypeIndex    byte = 'I' // Sequence for Index IDs (per Table)
-
-	// --- Name Mapping Types ---
-	// Used with metaNameMapTag.
-	nameMapTypeDatabase byte = 'D' // Maps DB Name -> DB ID
-	nameMapTypeTable    byte = 'T' // Maps Table Name -> Table ID (per DB)
-	nameMapTypeIndex    byte = 'I' // Maps Index Name -> Index ID (per Table)
-
-	// --- Null Flag ---
-	// Used in EncodeValue/DecodeValue to handle NULLs in a sortable way.
-	nullFlag    byte = 0x00 // Represents SQL NULL
-	nonNullFlag byte = 0x01 // Precedes a non-NULL encoded value
+	// Prefix for database metadata keys.
+	DatabaseMetadataPrefix KeyTypePrefix = 0x01
+	// Prefix for table metadata keys.
+	TableMetadataPrefix KeyTypePrefix = 0x02
+	// Prefix for row data keys.
+	RowDataPrefix KeyTypePrefix = 0x03
+	// Prefix for index keys.
+	IndexPrefix KeyTypePrefix = 0x04
+	// Prefix for sequence/counter keys (e.g., for generating RowIDs).
+	SequencePrefix KeyTypePrefix = 0x05
+	// Prefix for transaction metadata keys (e.g., for MVCC).
+	TransactionMetadataPrefix KeyTypePrefix = 0x06
+	// Prefix for column metadata (within a table metadata key).
+	ColumnMetadataPrefix KeyTypePrefix = 0x07
 )
 
-// DatabaseID, TableID, IndexID are assumed to be uint64 for encoding purposes.
-type DatabaseID = uint64
-type TableID = uint64
-type IndexID = uint64
-
-// ==============================================================================
-// Metadata Key Encoding
-// ==============================================================================
-
-// --- Sequence Keys ---
-
-// EncodeSequenceKey creates a key for fetching/updating sequence counters.
-// Example: MetaPrefix | metaSequenceTag | seqTypeDatabase -> value=lastDbID
-// Example: MetaPrefix | metaSequenceTag | dbID | seqTypeTable -> value=lastTableID
-// Example: MetaPrefix | metaSequenceTag | dbID | tableID | seqTypeIndex -> value=lastIndexID
-func EncodeSequenceKey(seqType byte, dbID DatabaseID, tableID TableID) []byte {
-	var key []byte
-	switch seqType {
-	case seqTypeDatabase:
-		key = make([]byte, 0, 1+1+1)
-		key = append(key, MetaPrefix, metaSequenceTag, seqTypeDatabase)
-	case seqTypeTable:
-		key = make([]byte, 0, 1+1+8+1)
-		key = append(key, MetaPrefix, metaSequenceTag)
-		key = encoding.EncodeUint64(key, dbID)
-		key = append(key, seqTypeTable)
-	case seqTypeIndex:
-		key = make([]byte, 0, 1+1+8+8+1)
-		key = append(key, MetaPrefix, metaSequenceTag)
-		key = encoding.EncodeUint64(key, dbID)
-		key = encoding.EncodeUint64(key, tableID)
-		key = append(key, seqTypeIndex)
-	default:
-		// Should not happen with controlled usage
-		panic(fmt.Sprintf("unknown sequence type: %c", seqType))
+// EncodeKey prefixes a key with its type and concatenates other parts.
+// This forms the full key used in BadgerDB.
+// Example: EncodeKey(RowDataPrefix, databaseID, tableID, rowID)
+func EncodeKey(prefix KeyTypePrefix, parts ...[]byte) []byte {
+	var buf bytes.Buffer
+	buf.WriteByte(byte(prefix))
+	for _, part := range parts {
+		buf.Write(part)
 	}
-	return key
+	return buf.Bytes()
 }
 
-// --- Name Mapping Keys ---
-
-// EncodeNameMapDbKey creates a key for mapping database name to database ID.
-// Key: MetaPrefix | metaNameMapTag | nameMapTypeDatabase | dbName -> value=dbID
-func EncodeNameMapDbKey(dbName string) []byte {
-	key := make([]byte, 0, 1+1+1+len(dbName)+1) // Estimate size
-	key = append(key, MetaPrefix, metaNameMapTag, nameMapTypeDatabase)
-	key = encoding.EncodeString(key, dbName) // EncodeString includes terminator
-	return key
+// EncodeDatabaseMetadataKey encodes a key for database metadata.
+// Format: DatabaseMetadataPrefix + databaseName
+func EncodeDatabaseMetadataKey(dbName string) []byte {
+	return EncodeKey(DatabaseMetadataPrefix, []byte(dbName))
 }
 
-// EncodeNameMapTableKey creates a key for mapping table name to table ID within a database.
-// Key: MetaPrefix | metaNameMapTag | dbID | nameMapTypeTable | tableName -> value=tableID
-func EncodeNameMapTableKey(dbID DatabaseID, tableName string) []byte {
-	key := make([]byte, 0, 1+1+8+1+len(tableName)+1) // Estimate size
-	key = append(key, MetaPrefix, metaNameMapTag)
-	key = encoding.EncodeUint64(key, dbID)
-	key = append(key, nameMapTypeTable)
-	key = encoding.EncodeString(key, tableName)
-	return key
+// DecodeDatabaseMetadataKey decodes a database metadata key to get the database name.
+func DecodeDatabaseMetadataKey(key []byte) (string, error) {
+	if len(key) < 1 || KeyTypePrefix(key[0]) != DatabaseMetadataPrefix {
+		return "", errors.NewGuocedbError(enum.ErrEncoding, errors.CodeInvalidKeyFormat,
+			"invalid database metadata key prefix", nil)
+	}
+	return string(key[1:]), nil
 }
 
-// EncodeNameMapIndexKey creates a key for mapping index name to index ID within a table.
-// Key: MetaPrefix | metaNameMapTag | dbID | tableID | nameMapTypeIndex | indexName -> value=indexID
-func EncodeNameMapIndexKey(dbID DatabaseID, tableID TableID, indexName string) []byte {
-	key := make([]byte, 0, 1+1+8+8+1+len(indexName)+1) // Estimate size
-	key = append(key, MetaPrefix, metaNameMapTag)
-	key = encoding.EncodeUint64(key, dbID)
-	key = encoding.EncodeUint64(key, tableID)
-	key = append(key, nameMapTypeIndex)
-	key = encoding.EncodeString(key, indexName)
-	return key
+// EncodeTableMetadataKey encodes a key for table metadata.
+// Format: TableMetadataPrefix + databaseIDBytes + tableName
+func EncodeTableMetadataKey(databaseID interfaces.ID, tableName string) []byte {
+	dbIDBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(dbIDBytes, uint64(databaseID))
+	return EncodeKey(TableMetadataPrefix, dbIDBytes, []byte(tableName))
 }
 
-// --- Schema/Definition Keys ---
-
-// EncodeDbMetaKey creates a key for storing database-level metadata (currently unused, placeholder).
-// Key: MetaPrefix | metaDbTag | dbID -> value=encodedDbMetadata
-func EncodeDbMetaKey(dbID DatabaseID) []byte {
-	key := make([]byte, 0, 1+1+8)
-	key = append(key, MetaPrefix, metaDbTag)
-	key = encoding.EncodeUint64(key, dbID)
-	return key
+// DecodeTableMetadataKey decodes a table metadata key.
+func DecodeTableMetadataKey(key []byte) (interfaces.ID, string, error) {
+	if len(key) < 9 || KeyTypePrefix(key[0]) != TableMetadataPrefix { // 1 byte prefix + 8 bytes ID
+		return 0, "", errors.NewGuocedbError(enum.ErrEncoding, errors.CodeInvalidKeyFormat,
+			"invalid table metadata key prefix or length", nil)
+	}
+	dbID := interfaces.ID(binary.BigEndian.Uint64(key[1:9]))
+	tableName := string(key[9:])
+	return dbID, tableName, nil
 }
 
-// EncodeTableSchemaKey creates the key for storing a table's schema definition.
-// Key: MetaPrefix | metaTableTag | dbID | tableID -> value=encodedSchemaData
-func EncodeTableSchemaKey(dbID DatabaseID, tableID TableID) []byte {
-	key := make([]byte, 0, 1+1+8+8)
-	key = append(key, MetaPrefix, metaTableTag)
-	key = encoding.EncodeUint64(key, dbID)
-	key = encoding.EncodeUint64(key, tableID)
-	return key
+// EncodeRowKey encodes a key for a specific row.
+// Format: RowDataPrefix + databaseIDBytes + tableIDBytes + rowIDBytes
+func EncodeRowKey(databaseID interfaces.ID, tableID interfaces.ID, rowID interfaces.RowID) []byte {
+	dbIDBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(dbIDBytes, uint64(databaseID))
+	tblIDBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(tblIDBytes, uint64(tableID))
+	rIDBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(rIDBytes, uint64(rowID))
+	return EncodeKey(RowDataPrefix, dbIDBytes, tblIDBytes, rIDBytes)
 }
 
-// EncodeIndexDefinitionKey creates the key for storing an index's definition.
-// Key: MetaPrefix | metaIndexTag | dbID | tableID | indexID -> value=encodedIndexDefinitionData
-func EncodeIndexDefinitionKey(dbID DatabaseID, tableID TableID, indexID IndexID) []byte {
-	key := make([]byte, 0, 1+1+8+8+8)
-	key = append(key, MetaPrefix, metaIndexTag)
-	key = encoding.EncodeUint64(key, dbID)
-	key = encoding.EncodeUint64(key, tableID)
-	key = encoding.EncodeUint64(key, indexID)
-	return key
+// DecodeRowKey decodes a row key to extract database ID, table ID, and row ID.
+func DecodeRowKey(key []byte) (interfaces.ID, interfaces.ID, interfaces.RowID, error) {
+	// Expected length: 1 (prefix) + 8 (dbID) + 8 (tableID) + 8 (rowID) = 25 bytes
+	if len(key) != 25 || KeyTypePrefix(key[0]) != RowDataPrefix {
+		return 0, 0, 0, errors.NewGuocedbError(enum.ErrEncoding, errors.CodeInvalidKeyFormat,
+			"invalid row key prefix or length", nil)
+	}
+	dbID := interfaces.ID(binary.BigEndian.Uint64(key[1:9]))
+	tableID := interfaces.ID(binary.BigEndian.Uint64(key[9:17]))
+	rowID := interfaces.RowID(binary.BigEndian.Uint64(key[17:25]))
+	return dbID, tableID, rowID, nil
 }
 
-// ==============================================================================
-// Value Encoding (SQL Types)
-// ==============================================================================
+// EncodeColumnValue encodes a single SQL value into bytes for storage.
+// This typically uses the common/types/value.Value's Bytes() method.
+func EncodeColumnValue(val value.Value) ([]byte, error) {
+	if val == nil {
+		// Represent NULL values in a specific way, e.g., a special byte or empty slice
+		// For now, let's represent NULL as a single null byte (0x00) for simple types
+		// and ensure it's distinct from actual 0 values.
+		// A more robust scheme might use a prefix for NULL or an explicit NULL Value type.
+		return []byte{0x00}, nil // Placeholder for NULL
+	}
+	// Use the Value's own Bytes() method for its specific serialization
+	// This relies on common/types/value.Value having robust binary serialization.
+	return val.Bytes()
+}
 
-// EncodeValue encodes a single Go value (representing an SQL value) into a sortable byte slice.
-// It handles NULL values by prefixing the encoded data with a nullFlag or nonNullFlag.
-// Uses the functions from internal/encoding for the actual type-specific encoding.
-func EncodeValue(buf []byte, value interface{}, typ sql.Type) ([]byte, error) {
-	if value == nil {
-		return append(buf, nullFlag), nil // Prepend null flag for NULL values
+// DecodeColumnValue decodes bytes from storage into a SQL value.
+// It requires the expected SQLType to correctly interpret the bytes.
+func DecodeColumnValue(data []byte, sqlType enum.SQLType) (value.Value, error) {
+	if len(data) == 1 && data[0] == 0x00 { // Placeholder for NULL
+		return value.NewNullValue(sqlType), nil
 	}
 
-	// Prepend non-null flag for actual values
-	buf = append(buf, nonNullFlag)
-
-	var err error
-	switch typ.Type() { // Use Type() to get the base type kind
-	case sql.Int8, sql.Int16, sql.Int32, sql.Int64, sql.Bit: // Treat Bit as int64 for simplicity
-		v, ok := sql.Int64.Convert(value)
-		if ok != nil || v == nil {
-			return buf[:len(buf)-1], errors.Newf(errors.ErrCodeConversion, "failed to convert %v to int64 for encoding", value)
-		}
-		buf = encoding.EncodeInt64(buf, v.(int64))
-	case sql.Uint8, sql.Uint16, sql.Uint32, sql.Uint64:
-		v, ok := sql.Uint64.Convert(value)
-		if ok != nil || v == nil {
-			return buf[:len(buf)-1], errors.Newf(errors.ErrCodeConversion, "failed to convert %v to uint64 for encoding", value)
-		}
-		buf = encoding.EncodeUint64(buf, v.(uint64))
-	case sql.Float32, sql.Float64:
-		v, ok := sql.Float64.Convert(value)
-		if ok != nil || v == nil {
-			return buf[:len(buf)-1], errors.Newf(errors.ErrCodeConversion, "failed to convert %v to float64 for encoding", value)
-		}
-		buf = encoding.EncodeFloat64(buf, v.(float64))
-	case sql.Timestamp, sql.Datetime, sql.Date: // Encode all as timestamp (int64 nanoseconds)
-		v, ok := sql.Timestamp.Convert(value)
-		if ok != nil || v == nil {
-			return buf[:len(buf)-1], errors.Newf(errors.ErrCodeConversion, "failed to convert %v to time.Time for encoding", value)
-		}
-		buf = encoding.EncodeTime(buf, v.(time.Time))
-	case sql.Char, sql.Varchar, sql.Text, sql.LongText, sql.MediumText, sql.TinyText,
-		sql.Enum, sql.Set, sql.JSON, sql.Blob, sql.LongBlob, sql.MediumBlob, sql.TinyBlob, sql.Binary, sql.VarBinary:
-		// Treat all string/byte types using EncodeString for sortability and null byte handling
-		v, ok := sql.LongText.Convert(value) // Convert to string
-		if ok != nil || v == nil {
-			// Try converting to bytes if string fails (for BLOB types)
-			bVal, bOk := sql.LongBlob.Convert(value)
-			if bOk != nil || bVal == nil {
-				return buf[:len(buf)-1], errors.Newf(errors.ErrCodeConversion, "failed to convert %v to string or []byte for encoding", value)
-			}
-			// Encode bytes as string - assumes UTF-8 compatibility or careful handling
-			buf = encoding.EncodeString(buf, string(bVal.([]byte)))
-		} else {
-			buf = encoding.EncodeString(buf, v.(string))
-		}
-	case sql.Boolean, sql.Bool: // sql.Bool is deprecated but handle it
-		v, ok := sql.Boolean.Convert(value)
-		if ok != nil || v == nil {
-			return buf[:len(buf)-1], errors.Newf(errors.ErrCodeConversion, "failed to convert %v to bool for encoding", value)
-		}
-		// EncodeBool doesn't return error, just appends 0x00 or 0x01
-		buf = encoding.EncodeBool(buf, v.(int8) == 1) // sql.Boolean uses int8(1) for true
-	case sql.Null:
-		// This case should be handled by the initial value == nil check
-		buf = buf[:len(buf)-1] // Remove the nonNullFlag added earlier
-		buf = append(buf, nullFlag)
-	// Add cases for Decimal, Year, Time, Geometry etc. if needed
-	default:
-		err = errors.Newf(errors.ErrCodeUnsupported, "unsupported type for badger encoding: %v", typ.String())
-		buf = buf[:len(buf)-1] // Remove the nonNullFlag
-	}
-
-	return buf, err
-}
-
-// DecodeValue decodes a single value from the beginning of the byte slice.
-// It checks the null flag first. If not null, it uses the appropriate
-// function from internal/encoding based on the expected sql.Type.
-// Returns the decoded value, the remaining buffer, and any error.
-func DecodeValue(buf []byte, typ sql.Type) (interface{}, []byte, error) {
-	if len(buf) == 0 {
-		return nil, buf, errors.New(errors.ErrCodeSerialization, "cannot decode value from empty buffer")
-	}
-
-	flag := buf[0]
-	buf = buf[1:] // Consume the flag
-
-	if flag == nullFlag {
-		return nil, buf, nil // SQL NULL value
-	}
-
-	if flag != nonNullFlag {
-		return nil, buf, errors.Newf(errors.ErrCodeSerialization, "invalid null flag encountered: expected %x or %x, got %x", nullFlag, nonNullFlag, flag)
-	}
-
-	// Value is not NULL, proceed with type-specific decoding
-	var val interface{}
-	var remainder []byte
-	var err error
-
-	switch typ.Type() {
-	case sql.Int8, sql.Int16, sql.Int32, sql.Int64, sql.Bit:
-		var i64 int64
-		i64, remainder, err = encoding.DecodeInt64(buf)
-		// Convert back to the specific target type if needed, though go-mysql-server often handles int64
-		val, err = typ.Convert(i64)
-		if err != nil { // Handle conversion error after successful decode
-			err = errors.Wrapf(err, errors.ErrCodeConversion, "failed to convert decoded int64 %d back to %s", i64, typ.String())
-		}
-	case sql.Uint8, sql.Uint16, sql.Uint32, sql.Uint64:
-		var u64 uint64
-		u64, remainder, err = encoding.DecodeUint64(buf)
-		val, err = typ.Convert(u64)
-		if err != nil {
-			err = errors.Wrapf(err, errors.ErrCodeConversion, "failed to convert decoded uint64 %d back to %s", u64, typ.String())
-		}
-	case sql.Float32, sql.Float64:
-		var f64 float64
-		f64, remainder, err = encoding.DecodeFloat64(buf)
-		val, err = typ.Convert(f64)
-		if err != nil {
-			err = errors.Wrapf(err, errors.ErrCodeConversion, "failed to convert decoded float64 %f back to %s", f64, typ.String())
-		}
-	case sql.Timestamp, sql.Datetime, sql.Date:
-		var t time.Time
-		t, remainder, err = encoding.DecodeTime(buf)
-		val, err = typ.Convert(t) // Convert to specific time type (Timestamp, Datetime, Date)
-		if err != nil {
-			err = errors.Wrapf(err, errors.ErrCodeConversion, "failed to convert decoded time %v back to %s", t, typ.String())
-		}
-	case sql.Char, sql.Varchar, sql.Text, sql.LongText, sql.MediumText, sql.TinyText,
-		sql.Enum, sql.Set, sql.JSON:
-		var s string
-		s, remainder, err = encoding.DecodeString(buf)
-		val, err = typ.Convert(s) // Convert to specific string type if necessary (rarely needed)
-		if err != nil {
-			err = errors.Wrapf(err, errors.ErrCodeConversion, "failed to convert decoded string back to %s", typ.String())
-		}
-	case sql.Blob, sql.LongBlob, sql.MediumBlob, sql.TinyBlob, sql.Binary, sql.VarBinary:
-		// Decode as string first, then convert to []byte for blob types
-		var s string
-		s, remainder, err = encoding.DecodeString(buf)
-		if err == nil {
-			val, err = typ.Convert([]byte(s)) // Convert string -> []byte -> target blob type
-			if err != nil {
-				err = errors.Wrapf(err, errors.ErrCodeConversion, "failed to convert decoded bytes back to %s", typ.String())
-			}
-		}
-	case sql.Boolean, sql.Bool:
-		var b bool
-		b, remainder, err = encoding.DecodeBool(buf)
-		if err == nil {
-			if b {
-				val = int8(1) // Convert bool true to int8(1) for sql.Boolean
-			} else {
-				val = int8(0) // Convert bool false to int8(0)
-			}
-			// Optional: Convert back to exact type if needed, though int8 often works
-			// val, err = typ.Convert(val)
-		}
-	case sql.Null:
-		// Handled by the nullFlag check above
-		val = nil
-	// Add cases for Decimal, Year, Time, Geometry etc. if needed
-	default:
-		err = errors.Newf(errors.ErrCodeUnsupported, "unsupported type for badger decoding: %v", typ.String())
-	}
-
+	// Use the value.ValueFromBytes method from common/types/value
+	val, err := value.ValueFromBytes(data, sqlType)
 	if err != nil {
-		// Don't return remainder if decoding failed partway
-		return nil, buf, err // Return original buffer slice before flag consumption
+		return nil, errors.NewGuocedbError(enum.ErrEncoding, errors.CodeDeserializationFailed,
+			fmt.Sprintf("failed to decode column value for type %s", sqlType.String()), err)
 	}
-
-	return val, remainder, nil
+	return val, nil
 }
 
-// ==============================================================================
-// Row Encoding
-// ==============================================================================
-
-// EncodeRow encodes a sql.Row (slice of interface{}) into a single byte slice.
-// It iterates through the row values, encoding each one using EncodeValue based on the schema.
-// The resulting byte slice is a concatenation of the individually encoded values.
-func EncodeRow(buf []byte, row sql.Row, schema interfaces.Schema) ([]byte, error) {
-	cols := schema.Columns()
-	if len(row) != len(cols) {
-		return buf, errors.Newf(errors.ErrCodeInternal, "row length (%d) does not match schema column count (%d)", len(row), len(cols))
-	}
-
-	var err error
-	for i, val := range row {
-		colDef := cols[i]
-		buf, err = EncodeValue(buf, val, colDef.Type())
+// EncodeRowData encodes an entire row of values into a single byte slice.
+// This simple approach concatenates column values. A more advanced approach
+// might use Protobuf or a custom binary format for efficiency and schema evolution.
+// For now, we assume fixed order and rely on value.Value.Bytes() for individual column encoding.
+func EncodeRowData(values []value.Value) ([]byte, error) {
+	var buffer bytes.Buffer
+	for i, val := range values {
+		encodedVal, err := EncodeColumnValue(val)
 		if err != nil {
-			return nil, errors.Wrapf(err, errors.ErrCodeSerialization, "failed to encode value at column %d ('%s')", i, colDef.Name())
+			return nil, errors.NewGuocedbError(enum.ErrEncoding, errors.CodeSerializationFailed,
+				fmt.Sprintf("failed to encode value for column %d", i), err)
 		}
+		// Prefix each value with its length to allow robust deserialization.
+		// Use a fixed-size integer for length prefix, e.g., 4 bytes (uint32).
+		lenBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(lenBytes, uint32(len(encodedVal)))
+		buffer.Write(lenBytes)
+		buffer.Write(encodedVal)
 	}
-	return buf, nil
+	return buffer.Bytes(), nil
 }
 
-// DecodeRow decodes a byte slice back into a sql.Row based on the provided schema.
-// It iteratively calls DecodeValue for each column defined in the schema.
-func DecodeRow(data []byte, schema interfaces.Schema) (sql.Row, error) {
-	cols := schema.Columns()
-	row := make(sql.Row, len(cols))
-	remainder := data
-	var err error
-	var val interface{}
+// DecodeRowData decodes a byte slice back into a slice of SQL values.
+// It requires the TableSchema to know the expected types of columns.
+func DecodeRowData(data []byte, schema *interfaces.TableSchema) ([]value.Value, error) {
+	reader := bytes.NewReader(data)
+	decodedValues := make([]value.Value, len(schema.Columns))
 
-	for i, colDef := range cols {
-		if len(remainder) == 0 && i < len(cols) {
-			// This can happen if the stored data is truncated or schema changed incompatibly
-			return nil, errors.Newf(errors.ErrCodeSerialization, "unexpected end of row data while decoding column %d ('%s'), data length %d", i, colDef.Name(), len(data))
-		}
-
-		val, remainder, err = DecodeValue(remainder, colDef.Type())
-		if err != nil {
-			return nil, errors.Wrapf(err, errors.ErrCodeSerialization, "failed to decode value for column %d ('%s')", i, colDef.Name())
-		}
-		row[i] = val
-	}
-
-	// Optional: Check if there's unexpected trailing data
-	// if len(remainder) > 0 {
-	//     log.Warnf("Trailing data (%d bytes) remaining after decoding row for table '%s'", len(remainder), schema.Name())
-	// }
-
-	return row, nil
-}
-
-// ==============================================================================
-// Table Data Key Encoding
-// ==============================================================================
-
-// EncodeTableKeyPrefix creates the common prefix for all rows within a specific table.
-// Prefix: TableDataPrefix | dbID | tableID |
-func EncodeTableKeyPrefix(dbID DatabaseID, tableID TableID) []byte {
-	key := make([]byte, 0, 1+8+8)
-	key = append(key, TableDataPrefix)
-	key = encoding.EncodeUint64(key, dbID)
-	key = encoding.EncodeUint64(key, tableID)
-	return key
-}
-
-// EncodeTableKey creates the full key for a specific row in a table.
-// Key: TableDataPrefix | dbID | tableID | encodedPKCol1 | encodedPKCol2 | ...
-// The primary key values are extracted from the row based on the schema's PK definition.
-func EncodeTableKey(keyBuf []byte, dbID DatabaseID, tableID TableID, row sql.Row, schema interfaces.Schema) ([]byte, error) {
-	prefix := EncodeTableKeyPrefix(dbID, tableID)
-	keyBuf = append(keyBuf[:0], prefix...) // Start with the prefix
-
-	pkIndexes := schema.PrimaryKeyColumnIndexes()
-	if len(pkIndexes) == 0 {
-		return nil, errors.Newf(errors.ErrCodeInternal, "cannot encode table key for table '%s' without a primary key", schema.Name())
-	}
-
-	cols := schema.Columns()
-	var err error
-	for _, pkIndex := range pkIndexes {
-		if pkIndex >= len(row) || pkIndex >= len(cols) {
-			return nil, errors.Newf(errors.ErrCodeInternal, "primary key index %d out of bounds for row/schema length %d/%d", pkIndex, len(row), len(cols))
-		}
-		pkVal := row[pkIndex]
-		pkCol := cols[pkIndex]
-		keyBuf, err = EncodeValue(keyBuf, pkVal, pkCol.Type())
-		if err != nil {
-			return nil, errors.Wrapf(err, errors.ErrCodeSerialization, "failed to encode primary key column '%s'", pkCol.Name())
-		}
-	}
-
-	return keyBuf, nil
-}
-
-// DecodeTableKeyPK extracts the primary key values from a full table data key.
-// It assumes the key starts with the standard prefix and decodes values based on the PK schema.
-func DecodeTableKeyPK(key []byte, schema interfaces.Schema) (sql.Row, error) {
-	pkIndexes := schema.PrimaryKeyColumnIndexes()
-	if len(pkIndexes) == 0 {
-		return nil, errors.Newf(errors.ErrCodeInternal, "cannot decode primary key from table '%s' without PK definition", schema.Name())
-	}
-
-	// Calculate expected prefix length
-	prefixLen := 1 + 8 + 8 // TableDataPrefix + dbID + tableID
-	if len(key) <= prefixLen {
-		return nil, errors.Newf(errors.ErrCodeSerialization, "key too short to contain primary key data (len %d, prefix %d)", len(key), prefixLen)
-	}
-
-	remainder := key[prefixLen:]
-	pkRow := make(sql.Row, len(pkIndexes))
-	cols := schema.Columns()
-	var err error
-	var pkVal interface{}
-
-	for i, pkIndex := range pkIndexes {
-		if pkIndex >= len(cols) {
-			return nil, errors.Newf(errors.ErrCodeInternal, "schema PK index %d out of bounds for schema length %d", pkIndex, len(cols))
-		}
-		pkCol := cols[pkIndex]
-		pkVal, remainder, err = DecodeValue(remainder, pkCol.Type())
-		if err != nil {
-			return nil, errors.Wrapf(err, errors.ErrCodeSerialization, "failed to decode primary key column '%s' from key", pkCol.Name())
-		}
-		pkRow[i] = pkVal
-	}
-
-	// We don't check for remaining bytes here, as the key structure is fixed.
-
-	return pkRow, nil
-}
-
-// ==============================================================================
-// Index Data Key Encoding
-// ==============================================================================
-
-// EncodeIndexKeyPrefix creates the common prefix for all entries within a specific index.
-// Prefix: IndexDataPrefix | dbID | tableID | indexID |
-func EncodeIndexKeyPrefix(dbID DatabaseID, tableID TableID, indexID IndexID) []byte {
-	key := make([]byte, 0, 1+8+8+8)
-	key = append(key, IndexDataPrefix)
-	key = encoding.EncodeUint64(key, dbID)
-	key = encoding.EncodeUint64(key, tableID)
-	key = encoding.EncodeUint64(key, indexID)
-	return key
-}
-
-// extractValuesByNames extracts values from a row corresponding to a list of column names.
-func extractValuesByNames(row sql.Row, schema interfaces.Schema, colNames []string) ([]interface{}, []sql.Type, error) {
-	values := make([]interface{}, len(colNames))
-	types := make([]sql.Type, len(colNames))
-	cols := schema.Columns()
-
-	for i, name := range colNames {
-		found := false
-		for j, colDef := range cols {
-			// Case-insensitive comparison might be needed depending on SQL standard / GMS behavior
-			if colDef.Name() == name {
-				if j >= len(row) {
-					return nil, nil, errors.Newf(errors.ErrCodeInternal, "column index %d for name '%s' is out of bounds for row length %d", j, name, len(row))
-				}
-				values[i] = row[j]
-				types[i] = colDef.Type()
-				found = true
-				break
+	for i, colDef := range schema.Columns {
+		// Read length prefix
+		lenBytes := make([]byte, 4)
+		if _, err := reader.Read(lenBytes); err != nil {
+			if err == io.EOF && i < len(schema.Columns) {
+				return nil, errors.NewGuocedbError(enum.ErrEncoding, errors.CodeDeserializationFailed,
+					fmt.Sprintf("unexpected EOF while reading length prefix for column %d (expected %d columns)", i, len(schema.Columns)), err)
 			}
+			return nil, errors.NewGuocedbError(enum.ErrEncoding, errors.CodeDeserializationFailed,
+				fmt.Sprintf("failed to read length prefix for column %d", i), err)
 		}
-		if !found {
-			return nil, nil, errors.Newf(errors.ErrCodeNotFound, "column '%s' not found in schema for index key encoding", name)
+		valLen := binary.BigEndian.Uint32(lenBytes)
+
+		// Read the actual value bytes
+		valBytes := make([]byte, valLen)
+		if _, err := reader.Read(valBytes); err != nil {
+			return nil, errors.NewGuocedbError(enum.ErrEncoding, errors.CodeDeserializationFailed,
+				fmt.Sprintf("failed to read value bytes for column %d", i), err)
 		}
+
+		val, err := DecodeColumnValue(valBytes, colDef.SQLType)
+		if err != nil {
+			return nil, errors.NewGuocedbError(enum.ErrEncoding, errors.CodeDeserializationFailed,
+				fmt.Sprintf("failed to decode value for column '%s' (index %d)", colDef.Name, i), err)
+		}
+		decodedValues[i] = val
 	}
-	return values, types, nil
+
+	if reader.Len() > 0 {
+		return nil, errors.NewGuocedbError(enum.ErrEncoding, errors.CodeDeserializationFailed,
+			fmt.Sprintf("extra bytes found after decoding all columns (%d bytes remaining)", reader.Len()), nil)
+	}
+
+	return decodedValues, nil
 }
 
-// EncodeIndexKey creates the full key for a specific index entry.
-// Key (Unique): IndexDataPrefix | dbID | tableID | indexID | encodedIdxVal1 | ... -> value=encodedPK
-// Key (NonUnique): IndexDataPrefix | dbID | tableID | indexID | encodedIdxVal1 | ... | encodedPKVal1 | ... -> value=empty
-// The row is used to extract both index column values and primary key values.
-func EncodeIndexKey(keyBuf []byte, dbID DatabaseID, tableID TableID, indexID IndexID, row sql.Row, schema interfaces.Schema, indexDef interfaces.IndexDefinition) ([]byte, []byte, error) {
-	prefix := EncodeIndexKeyPrefix(dbID, tableID, indexID)
-	keyBuf = append(keyBuf[:0], prefix...) // Start with the prefix
+// EncodeSequenceKey encodes a key for a sequence (e.g., for next RowID).
+// Format: SequencePrefix + databaseIDBytes + tableIDBytes
+func EncodeSequenceKey(databaseID interfaces.ID, tableID interfaces.ID) []byte {
+	dbIDBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(dbIDBytes, uint64(databaseID))
+	tblIDBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(tblIDBytes, uint64(tableID))
+	return EncodeKey(SequencePrefix, dbIDBytes, tblIDBytes)
+}
 
-	// 1. Encode Index Values
-	indexColNames := indexDef.ColumnNames()
-	indexValues, indexTypes, err := extractValuesByNames(row, schema, indexColNames)
+// EncodeTransactionMetadataKey encodes a key for transaction metadata.
+// Format: TransactionMetadataPrefix + transactionIDBytes
+func EncodeTransactionMetadataKey(txnID interfaces.ID) []byte {
+	txnIDBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(txnIDBytes, uint64(txnID))
+	return EncodeKey(TransactionMetadataPrefix, txnIDBytes)
+}
+
+// DecodeTransactionMetadataKey decodes a transaction metadata key.
+func DecodeTransactionMetadataKey(key []byte) (interfaces.ID, error) {
+	if len(key) != 9 || KeyTypePrefix(key[0]) != TransactionMetadataPrefix {
+		return 0, errors.NewGuocedbError(enum.ErrEncoding, errors.CodeInvalidKeyFormat,
+			"invalid transaction metadata key prefix or length", nil)
+	}
+	txnID := interfaces.ID(binary.BigEndian.Uint64(key[1:9]))
+	return txnID, nil
+}
+
+// EncodeTableSchemaValue encodes a TableSchema into bytes.
+// This typically uses a structured serialization format like Protobuf or YAML.
+// For now, let's use the YAML encoder for human-readability and simplicity in this example.
+func EncodeTableSchemaValue(schema *interfaces.TableSchema) ([]byte, error) {
+	yamlEncoder := encoding.NewYAMLEncoder()
+	data, err := yamlEncoder.Encode(schema)
 	if err != nil {
-		return nil, nil, errors.Wrapf(err, errors.ErrCodeInternal, "failed to extract index values for index '%s'", indexDef.Name())
+		return nil, errors.NewGuocedbError(enum.ErrEncoding, errors.CodeSerializationFailed,
+			"failed to encode table schema to YAML", err)
 	}
-
-	for i, idxVal := range indexValues {
-		keyBuf, err = EncodeValue(keyBuf, idxVal, indexTypes[i])
-		if err != nil {
-			return nil, nil, errors.Wrapf(err, errors.ErrCodeSerialization, "failed to encode index column '%s' for index '%s'", indexColNames[i], indexDef.Name())
-		}
-	}
-
-	// 2. Encode Primary Key Values
-	pkIndexes := schema.PrimaryKeyColumnIndexes()
-	if len(pkIndexes) == 0 {
-		return nil, nil, errors.Newf(errors.ErrCodeInternal, "cannot encode index key for table '%s' without a primary key", schema.Name())
-	}
-	pkValues := make([]interface{}, len(pkIndexes))
-	pkTypes := make([]sql.Type, len(pkIndexes))
-	cols := schema.Columns()
-	for i, pkIdx := range pkIndexes {
-		if pkIdx >= len(row) || pkIdx >= len(cols) {
-			return nil, nil, errors.Newf(errors.ErrCodeInternal, "primary key index %d out of bounds for row/schema length %d/%d", pkIdx, len(row), len(cols))
-		}
-		pkValues[i] = row[pkIdx]
-		pkTypes[i] = cols[pkIdx].Type()
-	}
-
-	// Decide where to put PK: in key for non-unique, in value for unique
-	if indexDef.IsUnique() {
-		// Encode PK into the value
-		valueBuf := make([]byte, 0, 64) // Estimate PK size
-		for i, pkVal := range pkValues {
-			valueBuf, err = EncodeValue(valueBuf, pkVal, pkTypes[i])
-			if err != nil {
-				return nil, nil, errors.Wrapf(err, errors.ErrCodeSerialization, "failed to encode primary key column (index value) '%s'", cols[pkIndexes[i]].Name())
-			}
-		}
-		return keyBuf, valueBuf, nil
-	} else {
-		// Append PK to the key for non-unique indexes to ensure key uniqueness
-		// and allow iteration over duplicates for a given index value set.
-		for i, pkVal := range pkValues {
-			keyBuf, err = EncodeValue(keyBuf, pkVal, pkTypes[i])
-			if err != nil {
-				return nil, nil, errors.Wrapf(err, errors.ErrCodeSerialization, "failed to encode primary key column (index key suffix) '%s'", cols[pkIndexes[i]].Name())
-			}
-		}
-		// Value can be empty for non-unique indexes where PK is in the key
-		return keyBuf, []byte{}, nil
-	}
+	return data, nil
 }
 
-// DecodeIndexKeyPK extracts the primary key values from an index key or value.
-// For unique indexes, it decodes the PK from the `valueBytes`.
-// For non-unique indexes, it decodes the PK from the suffix of the `keyBytes`
-// (after the index values).
-func DecodeIndexKeyPK(keyBytes, valueBytes []byte, schema interfaces.Schema, indexDef interfaces.IndexDefinition) (sql.Row, error) {
-	pkIndexes := schema.PrimaryKeyColumnIndexes()
-	if len(pkIndexes) == 0 {
-		return nil, errors.Newf(errors.ErrCodeInternal, "cannot decode primary key from index '%s' for table '%s' without PK definition", indexDef.Name(), schema.Name())
+// DecodeTableSchemaValue decodes bytes into a TableSchema.
+func DecodeTableSchemaValue(data []byte) (*interfaces.TableSchema, error) {
+	yamlDecoder := encoding.NewYAMLDecoder()
+	schema := &interfaces.TableSchema{}
+	err := yamlDecoder.Decode(data, schema)
+	if err != nil {
+		return nil, errors.NewGuocedbError(enum.ErrEncoding, errors.CodeDeserializationFailed,
+			"failed to decode table schema from YAML", err)
 	}
-
-	pkRow := make(sql.Row, len(pkIndexes))
-	cols := schema.Columns()
-	var remainder []byte
-	var err error
-
-	if indexDef.IsUnique() {
-		// PK is entirely in the value
-		remainder = valueBytes
-		if len(remainder) == 0 {
-			return nil, errors.Newf(errors.ErrCodeSerialization, "expected primary key in value for unique index '%s', but value is empty", indexDef.Name())
-		}
-	} else {
-		// PK is in the key suffix. Need to skip the prefix and index values.
-		prefixLen := 1 + 8 + 8 + 8 // IndexDataPrefix + dbID + tableID + indexID
-		if len(keyBytes) <= prefixLen {
-			return nil, errors.Newf(errors.ErrCodeSerialization, "index key too short (len %d) to contain index/pk data for non-unique index '%s'", len(keyBytes), indexDef.Name())
-		}
-		keyRemainder := keyBytes[prefixLen:]
-
-		// Decode and discard index values to find where PK starts
-		indexColNames := indexDef.ColumnNames()
-		tempSchemaCols := make([]interfaces.ColumnDefinition, len(indexColNames))
-		foundCount := 0
-		for i, name := range indexColNames {
-			for _, colDef := range cols {
-				if colDef.Name() == name { // Case-sensitive match assumed here
-					tempSchemaCols[i] = colDef
-					foundCount++
-					break
-				}
-			}
-		}
-		if foundCount != len(indexColNames) {
-			return nil, errors.Newf(errors.ErrCodeInternal, "could not find all index columns in schema to decode non-unique index key for '%s'", indexDef.Name())
-		}
-
-		var discardVal interface{}
-		for _, colDef := range tempSchemaCols {
-			if len(keyRemainder) == 0 {
-				return nil, errors.Newf(errors.ErrCodeSerialization, "ran out of key bytes while skipping index values for non-unique index '%s'", indexDef.Name())
-			}
-			discardVal, keyRemainder, err = DecodeValue(keyRemainder, colDef.Type())
-			if err != nil {
-				return nil, errors.Wrapf(err, errors.ErrCodeSerialization, "error skipping index value for column '%s' in non-unique index key for '%s'", colDef.Name(), indexDef.Name())
-			}
-		}
-		// Now, keyRemainder should point to the start of the encoded PK
-		remainder = keyRemainder
-		if len(remainder) == 0 {
-			return nil, errors.Newf(errors.ErrCodeSerialization, "expected primary key suffix in key for non-unique index '%s', but reached end of key", indexDef.Name())
-		}
-	}
-
-	// Decode the PK values from the identified remainder (either valueBytes or key suffix)
-	var pkVal interface{}
-	for i, pkIdx := range pkIndexes {
-		if pkIdx >= len(cols) {
-			return nil, errors.Newf(errors.ErrCodeInternal, "schema PK index %d out of bounds for schema length %d", pkIdx, len(cols))
-		}
-		pkCol := cols[pkIdx]
-		if len(remainder) == 0 {
-			return nil, errors.Newf(errors.ErrCodeSerialization, "ran out of data while decoding primary key column '%s' for index '%s'", pkCol.Name(), indexDef.Name())
-		}
-		pkVal, remainder, err = DecodeValue(remainder, pkCol.Type())
-		if err != nil {
-			return nil, errors.Wrapf(err, errors.ErrCodeSerialization, "failed to decode primary key column '%s' from index data for '%s'", pkCol.Name(), indexDef.Name())
-		}
-		pkRow[i] = pkVal
-	}
-
-	return pkRow, nil
+	return schema, nil
 }
+
+// EncodeDatabaseID encodes an interfaces.ID (for database) into a byte slice.
+func EncodeDatabaseID(id interfaces.ID) []byte {
+	b := make([]byte, 8)
+	binary.BigEndian.PutUint64(b, uint64(id))
+	return b
+}
+
+// DecodeDatabaseID decodes a byte slice into an interfaces.ID (for database).
+func DecodeDatabaseID(b []byte) (interfaces.ID, error) {
+	if len(b) != 8 {
+		return 0, errors.NewGuocedbError(enum.ErrEncoding, errors.CodeInvalidKeyFormat,
+			fmt.Sprintf("invalid byte slice length for database ID: expected 8, got %d", len(b)), nil)
+	}
+	return interfaces.ID(binary.BigEndian.Uint64(b)), nil
+}
+
+// EncodeTableID encodes an interfaces.ID (for table) into a byte slice.
+func EncodeTableID(id interfaces.ID) []byte {
+	b := make([]byte, 8)
+	binary.BigEndian.PutUint64(b, uint64(id))
+	return b
+}
+
+// DecodeTableID decodes a byte slice into an interfaces.ID (for table).
+func DecodeTableID(b []byte) (interfaces.ID, error) {
+	if len(b) != 8 {
+		return 0, errors.NewGuocedbError(enum.ErrEncoding, errors.CodeInvalidKeyFormat,
+			fmt.Sprintf("invalid byte slice length for table ID: expected 8, got %d", len(b)), nil)
+	}
+	return interfaces.ID(binary.BigEndian.Uint64(b)), nil
+}
+
+// EncodeRowID encodes an interfaces.RowID into a byte slice.
+func EncodeRowID(id interfaces.RowID) []byte {
+	b := make([]byte, 8)
+	binary.BigEndian.PutUint64(b, uint64(id))
+	return b
+}
+
+// DecodeRowID decodes a byte slice into an interfaces.RowID.
+func DecodeRowID(b []byte) (interfaces.RowID, error) {
+	if len(b) != 8 {
+		return 0, errors.NewGuocedbError(enum.ErrEncoding, errors.CodeInvalidKeyFormat,
+			fmt.Sprintf("invalid byte slice length for row ID: expected 8, got %d", len(b)), nil)
+	}
+	return interfaces.RowID(binary.BigEndian.Uint64(b)), nil
+}
+
+// EncodeColumnID encodes an interfaces.ColumnID into a byte slice.
+func EncodeColumnID(id interfaces.ColumnID) []byte {
+	b := make([]byte, 8)
+	binary.BigEndian.PutUint64(b, uint64(id))
+	return b
+}
+
+// DecodeColumnID decodes a byte slice into an interfaces.ColumnID.
+func DecodeColumnID(b []byte) (interfaces.ColumnID, error) {
+	if len(b) != 8 {
+		return 0, errors.NewGuocedbError(enum.ErrEncoding, errors.CodeInvalidKeyFormat,
+			fmt.Sprintf("invalid byte slice length for column ID: expected 8, got %d", len(b)), nil)
+	}
+	return interfaces.ColumnID(binary.BigEndian.Uint64(b)), nil
+}
+
+// EncodeTimestamp encodes a time.Time into a byte slice (UnixNano).
+func EncodeTimestamp(t time.Time) []byte {
+	b := make([]byte, 8)
+	binary.BigEndian.PutUint64(b, uint64(t.UnixNano()))
+	return b
+}
+
+// DecodeTimestamp decodes a byte slice into a time.Time (UnixNano).
+func DecodeTimestamp(b []byte) (time.Time, error) {
+	if len(b) != 8 {
+		return time.Time{}, errors.NewGuocedbError(enum.ErrEncoding, errors.CodeInvalidKeyFormat,
+			fmt.Sprintf("invalid byte slice length for timestamp: expected 8, got %d", len(b)), nil)
+	}
+	return time.Unix(0, int64(binary.BigEndian.Uint64(b))), nil
+}
+
+//Personal.AI order the ending

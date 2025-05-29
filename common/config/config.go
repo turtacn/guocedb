@@ -1,366 +1,443 @@
-// Package config handles the loading, parsing, and management of Guocedb's configuration.
-// It provides a structured way to define application settings, allowing for easy
-// modification and dynamic behavior based on external configurations (e.g., YAML files,
-// environment variables).
-//
-// 此包负责 Guocedb 配置的加载、解析和管理。
-// 它提供了一种结构化的方式来定义应用程序设置，允许基于外部配置（例如，YAML 文件、
-// 环境变量）进行轻松修改和动态行为。
+// Package config defines the configuration structure and loading functions for the Guocedb project.
+// This file is responsible for parsing configuration from various sources (e.g., YAML files,
+// environment variables) and providing a centralized, type-safe way to access system settings.
+// It relies on common/constants for default values and common/errors for consistent error reporting.
 package config
 
 import (
 	"fmt"
 	"os"
-	"sync" // For singleton pattern
-	"time" // For time.Duration in configurations
+	"path/filepath"
+	"strings"
+	"sync" // For the singleton pattern.
 
-	"github.com/turtacn/guocedb/common/constants"  // For default config path
-	"github.com/turtacn/guocedb/common/log"        // For logging configuration issues
-	"github.com/turtacn/guocedb/common/types/enum" // For enum types used in config
-	"gopkg.in/yaml.v3"                             // For YAML parsing
+	"gopkg.in/yaml.v3" // For parsing YAML configuration files.
+
+	"github.com/turtacn/guocedb/common/constants"  // Import constants for default configuration values.
+	"github.com/turtacn/guocedb/common/errors"     // Import errors for consistent error handling.
+	"github.com/turtacn/guocedb/common/log"        // Import log for logging configuration-related messages.
+	"github.com/turtacn/guocedb/common/types/enum" // Import enum for log levels and component types.
+
+	"go.uber.org/zap" // For structured logging in the config package.
 )
 
-// Config represents the overall structure of the Guocedb configuration.
-// It includes various sections for server, storage, logging, and security settings.
-//
-// Config 结构体表示 Guocedb 配置的整体结构。
-// 它包括服务器、存储、日志和安全设置的各个部分。
+// Config represents the top-level configuration structure for Guocedb.
+// Each field corresponds to a configurable aspect of the database.
 type Config struct {
-	// Server defines settings related to the MySQL server listener.
-	// 服务器定义了与 MySQL 服务器监听器相关的设置。
+	// ServerConfig holds configurations related to the database server.
 	Server ServerConfig `yaml:"server"`
-	// Storage defines settings for the underlying data storage engine.
-	// 存储定义了底层数据存储引擎的设置。
+	// NetworkConfig holds configurations related to network communication.
+	Network NetworkConfig `yaml:"network"`
+	// StorageConfig holds configurations related to the storage layer.
 	Storage StorageConfig `yaml:"storage"`
-	// Log defines settings for application logging.
-	// 日志定义了应用程序日志记录的设置。
-	Log LogConfig `yaml:"log"`
-	// Security defines security-related settings like authentication and TLS.
-	// 安全定义了与安全相关的设置，如认证和 TLS。
+	// SecurityConfig holds configurations related to authentication and authorization.
 	Security SecurityConfig `yaml:"security"`
-	// Audit defines settings for auditing events.
-	// 审计定义了审计事件的设置。
-	Audit AuditConfig `yaml:"audit"`
+	// LogConfig holds configurations related to logging.
+	Log LogConfig `yaml:"log"`
+	// CatalogConfig holds configurations related to the metadata catalog.
+	Catalog CatalogConfig `yaml:"catalog"`
+	// PerformanceConfig holds general performance tuning parameters.
+	Performance PerformanceConfig `yaml:"performance"`
+	// DebugConfig holds configurations for debugging features.
+	Debug DebugConfig `yaml:"debug"`
 }
 
-// ServerConfig defines configuration parameters for the Guocedb MySQL server.
-//
-// ServerConfig 定义了 Guocedb MySQL 服务器的配置参数。
+// ServerConfig defines server-specific settings.
 type ServerConfig struct {
-	// Port is the port number the MySQL server will listen on.
-	// MySQL 服务器将监听的端口号。
-	Port int `yaml:"port"`
-	// Host is the network interface the MySQL server will bind to.
-	// MySQL 服务器将绑定的网络接口。
-	Host string `yaml:"host"`
-	// MaxConnections is the maximum number of concurrent client connections allowed.
-	// 允许的最大并发客户端连接数。
-	MaxConnections int `yaml:"max_connections"`
-	// ReadTimeout specifies the duration for reading a complete packet from the client.
-	// 从客户端读取完整数据包的持续时间。
-	ReadTimeout time.Duration `yaml:"read_timeout"`
-	// WriteTimeout specifies the duration for writing a complete packet to the client.
-	// 将完整数据包写入客户端的持续时间。
-	WriteTimeout time.Duration `yaml:"write_timeout"`
-	// Charset specifies the default character set for connections.
-	// 连接的默认字符集。
-	Charset string `yaml:"charset"`
-	// Collation specifies the default collation for connections.
-	// 连接的默认排序规则。
-	Collation string `yaml:"collation"`
+	// DataPath is the base directory for all database data.
+	DataPath string `yaml:"dataPath"`
+	// EnableHTTPAPI enables or disables the HTTP management API.
+	EnableHTTPAPI bool `yaml:"enableHttpAPI"`
+	// EnableGRPCAPI enables or disables the gRPC management API.
+	EnableGRPCAPI bool `yaml:"enableGrpcAPI"`
+	// RunInReadOnlyMode starts the server in read-only mode.
+	RunInReadOnlyMode bool `yaml:"readOnly"`
+	// PidFile is the path to the process ID file.
+	PidFile string `yaml:"pidFile"`
 }
 
-// StorageConfig defines configuration parameters for the Guocedb storage engine.
-//
-// StorageConfig 定义了 Guocedb 存储引擎的配置参数。
+// NetworkConfig defines network-specific settings.
+type NetworkConfig struct {
+	// MySQLPort is the port for MySQL protocol connections.
+	MySQLPort int `yaml:"mysqlPort"`
+	// ManagementGRPCPort is the port for the gRPC management API.
+	ManagementGRPCPort int `yaml:"managementGrpcPort"`
+	// ManagementRESTPort is the port for the RESTful management API (future).
+	ManagementRESTPort int `yaml:"managementRestPort"`
+	// ListenAddress is the IP address to listen on (e.g., "0.0.0.0" for all interfaces).
+	ListenAddress string `yaml:"listenAddress"`
+	// ReadTimeout specifies the default timeout for network read operations.
+	ReadTimeout string `yaml:"readTimeout"` // e.g., "5s", "1m"
+	// WriteTimeout specifies the default timeout for network write operations.
+	WriteTimeout string `yaml:"writeTimeout"` // e.g., "5s", "1m"
+	// MaxConnections defines the maximum number of concurrent client connections.
+	MaxConnections int `yaml:"maxConnections"`
+}
+
+// StorageConfig defines storage layer settings.
 type StorageConfig struct {
-	// Engine specifies the type of storage engine to use (e.g., Badger).
-	// 指定要使用的存储引擎类型（例如，Badger）。
-	Engine enum.StorageEngineType `yaml:"engine"`
-	// DataDir is the directory path where persistent data will be stored.
-	// 持久化数据将存储的目录路径。
-	DataDir string `yaml:"data_dir"`
-	// Badger specific configurations
-	// Badger 特有配置。
+	// StorageEngine specifies the primary storage engine to use (e.g., "badger").
+	StorageEngine string `yaml:"storageEngine"`
+	// Badger specific configurations.
 	Badger BadgerConfig `yaml:"badger"`
-	// KVD specific configurations (placeholder)
-	// KVD 特有配置（占位符）。
-	KVD KVDConfig `yaml:"kvd"`
+	// BlockSize is the default block size for storage operations (e.g., in bytes).
+	BlockSize int `yaml:"blockSize"`
+	// CacheSizeMB is the size of the storage cache in megabytes.
+	CacheSizeMB int `yaml:"cacheSizeMB"`
 }
 
 // BadgerConfig defines specific configurations for the Badger KV store.
-//
-// BadgerConfig 定义了 Badger KV 存储的特定配置。
 type BadgerConfig struct {
-	// ValueLogFileSize is the maximum size of a value log file in bytes.
-	// 值日志文件的最大大小（字节）。
-	ValueLogFileSize int64 `yaml:"value_log_file_size"`
-	// SyncWrites determines if writes should be synced to disk immediately.
-	// 确定写入是否应立即同步到磁盘。
-	SyncWrites bool `yaml:"sync_writes"`
-	// VLogGCInterval specifies the interval for value log garbage collection.
-	// 值日志垃圾回收的间隔。
-	VLogGCInterval time.Duration `yaml:"vlog_gc_interval"`
-	// VLogGCDiscardRatio specifies the discard ratio for value log garbage collection.
-	// 值日志垃圾回收的丢弃比率。
-	VLogGCDiscardRatio float64 `yaml:"vlog_gc_discard_ratio"`
-}
-
-// KVDConfig defines specific configurations for a generic Key-Value Database (placeholder).
-//
-// KVDConfig 定义了通用键值数据库的特定配置（占位符）。
-type KVDConfig struct {
-	// Path to the KVD data files.
-	// KVD 数据文件的路径。
+	// Path is the directory for BadgerDB data.
 	Path string `yaml:"path"`
+	// ValueLogFileSize is the maximum size of a BadgerDB value log file.
+	ValueLogFileSize int `yaml:"valueLogFileSize"`
+	// SyncWrites enables synchronous writes for BadgerDB.
+	SyncWrites bool `yaml:"syncWrites"`
+	// MaxTableSize is the maximum size of a BadgerDB SST table.
+	MaxTableSize int `yaml:"maxTableSize"`
 }
 
-// LogConfig defines configuration parameters for logging.
-//
-// LogConfig 定义了日志记录的配置参数。
-type LogConfig struct {
-	// Level specifies the minimum logging level to output.
-	// 指定要输出的最低日志级别。
-	Level enum.LogLevel `yaml:"level"`
-	// FilePath is the path to the log file. If empty, logs go to stdout.
-	// 日志文件的路径。如果为空，日志将输出到标准输出。
-	FilePath string `yaml:"file_path"`
-}
-
-// SecurityConfig defines security-related configuration parameters.
-//
-// SecurityConfig 定义了与安全相关的配置参数。
+// SecurityConfig defines security-related settings.
 type SecurityConfig struct {
-	// DefaultUser is the default database user.
-	// 默认数据库用户。
-	DefaultUser string `yaml:"default_user"`
-	// DefaultPassword is the default password for the default user.
-	// 默认用户的默认密码。
-	DefaultPassword string `yaml:"default_password"` // Should be hashed in production
-	// AuthMethod specifies the authentication method to use.
-	// 指定要使用的认证方法。
-	AuthMethod enum.AuthMethodType `yaml:"auth_method"`
-	// TLSEnabled indicates whether TLS encryption is enabled for connections.
-	// 指示是否为连接启用 TLS 加密。
-	TLSEnabled bool `yaml:"tls_enabled"`
-	// TLSCertPath is the path to the TLS server certificate file.
-	// TLS 服务器证书文件的路径。
-	TLSCertPath string `yaml:"tls_cert_path"`
-	// TLSKeyPath is the path to the TLS server key file.
-	// TLS 服务器密钥文件的路径。
-	TLSKeyPath string `yaml:"tls_key_path"`
-	// TLSCaCertPath is the path to the TLS CA certificate file (for client verification).
-	// TLS CA 证书文件的路径（用于客户端验证）。
-	TLSCaCertPath string `yaml:"tls_ca_cert_path"`
+	// EnableAuthentication controls whether user authentication is required.
+	EnableAuthentication bool `yaml:"enableAuthentication"`
+	// DefaultAuthMethod is the default authentication method for new users.
+	DefaultAuthMethod string `yaml:"defaultAuthMethod"` // e.g., "native", "sha256"
+	// RootPassword specifies the initial password for the 'root' user.
+	RootPassword string `yaml:"rootPassword"` // WARNING: For initial setup, should be changed.
+	// TLSConfig holds TLS/SSL configuration.
+	TLS TLSConfig `yaml:"tls"`
 }
 
-// AuditConfig defines configuration parameters for audit logging.
-//
-// AuditConfig 定义了审计日志记录的配置参数。
-type AuditConfig struct {
-	// Enabled indicates whether audit logging is enabled.
-	// 指示是否启用审计日志记录。
-	Enabled bool `yaml:"enabled"`
-	// FilePath is the path to the audit log file.
-	// 审计日志文件的路径。
-	FilePath string `yaml:"file_path"`
-	// LogQueries indicates whether to log executed SQL queries.
-	// 指示是否记录执行的 SQL 查询。
-	LogQueries bool `yaml:"log_queries"`
-	// LogConnections indicates whether to log client connection events.
-	// 指示是否记录客户端连接事件。
-	LogConnections bool `yaml:"log_connections"`
-	// LogAuthentication indicates whether to log authentication attempts.
-	// 指示是否记录认证尝试。
-	LogAuthentication bool `yaml:"log_authentication"`
+// TLSConfig defines TLS/SSL settings for secure communication.
+type TLSConfig struct {
+	// EnableTLS enables or disables TLS.
+	EnableTLS bool `yaml:"enableTLS"`
+	// CertFile is the path to the TLS certificate file.
+	CertFile string `yaml:"certFile"`
+	// KeyFile is the path to the TLS private key file.
+	KeyFile string `yaml:"keyFile"`
+	// CAFile is the path to the CA certificate file for client authentication.
+	CAFile string `yaml:"caFile"`
 }
 
-var (
-	// globalConfig is the singleton instance of the application configuration.
-	// globalConfig 是应用程序配置的单例实例。
-	globalConfig *Config
-	// configOnce ensures that the globalConfig is initialized only once.
-	// configOnce 确保 globalConfig 只初始化一次。
-	configOnce sync.Once
-)
+// LogConfig defines logging-related settings.
+type LogConfig struct {
+	// Level is the minimum logging level (e.g., "DEBUG", "INFO", "WARN", "ERROR", "FATAL").
+	Level string `yaml:"level"`
+	// FilePath is the path to the log file. If empty, logs to stdout.
+	FilePath string `yaml:"filePath"`
+	// MaxSizeMB is the maximum size of a log file before rotation (in MB).
+	MaxSizeMB int `yaml:"maxSizeMB"`
+	// MaxBackups is the maximum number of old log files to retain.
+	MaxBackups int `yaml:"maxBackups"`
+	// MaxAgeDays is the maximum number of days to retain old log files.
+	MaxAgeDays int `yaml:"maxAgeDays"`
+	// EnableConsoleOutput controls whether logs are also printed to the console.
+	EnableConsoleOutput bool `yaml:"enableConsoleOutput"`
+}
 
-// GetConfig returns the singleton instance of the application configuration.
-// It panics if the configuration has not been loaded successfully via LoadConfig.
-//
-// GetConfig 返回应用程序配置的单例实例。
-// 如果尚未通过 LoadConfig 成功加载配置，它会 panic。
+// CatalogConfig defines settings for the metadata catalog.
+type CatalogConfig struct {
+	// PersistIntervalSeconds is the interval (in seconds) at which catalog changes are persisted.
+	PersistIntervalSeconds int `yaml:"persistIntervalSeconds"`
+	// MaxMemoryCatalogSizeMB is the maximum memory usage for the in-memory catalog cache (in MB).
+	MaxMemoryCatalogSizeMB int `yaml:"maxMemoryCatalogSizeMB"`
+}
+
+// PerformanceConfig defines general performance tuning parameters.
+type PerformanceConfig struct {
+	// QueryCacheSizeMB is the size of the query result cache in megabytes.
+	QueryCacheSizeMB int `yaml:"queryCacheSizeMB"`
+	// MaxConcurrentQueries is the maximum number of queries that can execute concurrently.
+	MaxConcurrentQueries int `yaml:"maxConcurrentQueries"`
+}
+
+// DebugConfig defines settings for debugging features.
+type DebugConfig struct {
+	// EnablePprof enables the pprof profiling server.
+	EnablePprof bool `yaml:"enablePprof"`
+	// PprofPort is the port for the pprof server.
+	PprofPort int `yaml:"pprofPort"`
+	// EnableSQLTracing enables detailed SQL execution tracing.
+	EnableSQLTracing bool `yaml:"enableSqlTracing"`
+}
+
+// globalConfig is the singleton instance of the Guocedb configuration.
+var globalConfig *Config
+var configOnce sync.Once
+
+// LoadConfig initializes and loads the global configuration.
+// It first applies default values, then overrides them with values from
+// the specified YAML file, and finally with environment variables.
+func LoadConfig(configPath string) error {
+	var err error
+	configOnce.Do(func() {
+		cfg := &Config{}
+
+		// 1. Apply default values
+		cfg.applyDefaults()
+
+		// 2. Load from YAML file if provided
+		if configPath != "" {
+			if _, statErr := os.Stat(configPath); os.IsNotExist(statErr) {
+				log.GetLogger().Info("Configuration file not found, using defaults and environment variables.", zap.String("path", configPath))
+			} else if statErr != nil {
+				err = errors.NewGuocedbError(enum.ErrConfiguration, errors.CodeConfigLoadFailed,
+					fmt.Sprintf("failed to stat configuration file %s", configPath), statErr)
+				return
+			} else {
+				fileContent, readErr := os.ReadFile(configPath)
+				if readErr != nil {
+					err = errors.NewGuocedbError(enum.ErrConfiguration, errors.CodeConfigLoadFailed,
+						fmt.Sprintf("failed to read configuration file %s", configPath), readErr)
+					return
+				}
+				if unmarshalErr := yaml.Unmarshal(fileContent, cfg); unmarshalErr != nil {
+					err = errors.NewGuocedbError(enum.ErrConfiguration, errors.CodeConfigInvalidValue,
+						fmt.Sprintf("failed to unmarshal configuration file %s", configPath), unmarshalErr)
+					return
+				}
+				log.GetLogger().Info("Configuration loaded from file.", zap.String("path", configPath))
+			}
+		} else {
+			log.GetLogger().Info("No configuration file path provided, using defaults and environment variables.")
+		}
+
+		// 3. Override with environment variables
+		cfg.overrideWithEnv()
+
+		// 4. Validate and sanitize paths
+		cfg.sanitizePaths()
+
+		globalConfig = cfg
+	})
+	return err
+}
+
+// GetConfig returns the global configuration instance.
+// It should be called after LoadConfig has successfully run.
 func GetConfig() *Config {
 	if globalConfig == nil {
-		// This indicates a programming error where GetConfig is called before LoadConfig.
-		log.GetLogger().Fatal("Configuration not loaded. Call LoadConfig() first.")
+		// This indicates LoadConfig was not called or failed.
+		// In a production app, you might want to panic or return a default/error.
+		// For now, logging a warning and returning a zero-value config.
+		log.GetLogger().Fatal("Configuration not initialized. Call LoadConfig() first.")
+		return &Config{} // Return a zero-value config to avoid nil panics in some cases.
 	}
 	return globalConfig
 }
 
-// LoadConfig loads the configuration from the specified YAML file path.
-// It applies default values where not specified and initializes the global config instance.
-// If filePath is empty, it attempts to load from constants.DefaultConfigPath.
-//
-// LoadConfig 从指定的 YAML 文件路径加载配置。
-// 它在未指定的地方应用默认值，并初始化全局配置实例。
-// 如果 filePath 为空，它会尝试从 constants.DefaultConfigPath 加载。
-func LoadConfig(filePath string) error {
-	var loadErr error
-	configOnce.Do(func() {
-		if filePath == "" {
-			filePath = constants.DefaultConfigPath
-		}
+// applyDefaults sets the default values for the configuration.
+func (c *Config) applyDefaults() {
+	c.Server.DataPath = constants.DefaultDataPath
+	c.Server.EnableHTTPAPI = false // Disabled by default
+	c.Server.EnableGRPCAPI = true  // Enabled by default
+	c.Server.RunInReadOnlyMode = false
+	c.Server.PidFile = filepath.Join(os.TempDir(), constants.ProjectName+".pid")
 
-		log.GetLogger().Info("Attempting to load configuration from: %s", filePath)
+	c.Network.MySQLPort = constants.DefaultMySQLPort
+	c.Network.ManagementGRPCPort = constants.DefaultManagementGRPCPort
+	c.Network.ManagementRESTPort = constants.DefaultManagementRESTPort
+	c.Network.ListenAddress = "0.0.0.0" // Listen on all interfaces by default
+	// Using String() method from time.Duration for NetworkReadTimeout and NetworkWriteTimeout
+	c.Network.ReadTimeout = constants.NetworkReadTimeout.String()
+	c.Network.WriteTimeout = constants.NetworkWriteTimeout.String()
+	c.Network.MaxConnections = constants.MaxConnections
 
-		data, err := os.ReadFile(filePath)
-		if err != nil {
-			// If file not found, try to create with defaults
-			if os.IsNotExist(err) {
-				log.GetLogger().Warn("Config file not found at %s. Creating with default values.", filePath)
-				defaultCfg := GetDefaultConfig()
-				data, marshalErr := yaml.Marshal(defaultCfg)
-				if marshalErr != nil {
-					loadErr = fmt.Errorf("failed to marshal default config: %w", marshalErr)
-					return
-				}
-				writeErr := os.WriteFile(filePath, data, 0644)
-				if writeErr != nil {
-					loadErr = fmt.Errorf("failed to write default config to %s: %w", filePath, writeErr)
-					return
-				}
-				globalConfig = defaultCfg
-				log.GetLogger().Info("Default configuration saved to %s. Please review and modify as needed.", filePath)
-				return
-			}
-			loadErr = fmt.Errorf("failed to read config file %s: %w", filePath, err)
-			return
-		}
+	c.Storage.StorageEngine = "badger" // Default to Badger
+	c.Storage.BlockSize = 8192         // 8KB default block size
+	c.Storage.CacheSizeMB = 256        // 256MB default cache
 
-		cfg := &Config{}
-		// Set sensible defaults before unmarshalling to ensure all fields have a value
-		// in case they are omitted from the YAML file.
-		*cfg = *GetDefaultConfig() // Apply defaults first
+	c.Storage.Badger.Path = constants.DefaultBadgerPath
+	c.Storage.Badger.ValueLogFileSize = constants.BadgerValueLogFileSize
+	c.Storage.Badger.SyncWrites = constants.BadgerSyncWrites
+	c.Storage.Badger.MaxTableSize = 64 << 20 // 64 MB
 
-		if err := yaml.Unmarshal(data, cfg); err != nil {
-			loadErr = fmt.Errorf("failed to unmarshal config file %s: %w", filePath, err)
-			return
-		}
+	c.Security.EnableAuthentication = true // Enabled by default
+	c.Security.DefaultAuthMethod = "native"
+	c.Security.RootPassword = constants.DefaultPassword // WARNING: Change this!
+	c.Security.TLS.EnableTLS = false
+	c.Security.TLS.CertFile = ""
+	c.Security.TLS.KeyFile = ""
+	c.Security.TLS.CAFile = ""
 
-		globalConfig = cfg
-		log.GetLogger().Info("Configuration loaded successfully from: %s", filePath)
-	})
-	return loadErr
+	c.Log.Level = constants.DefaultLogLevel
+	c.Log.FilePath = constants.DefaultLogFilePath
+	c.Log.MaxSizeMB = constants.LogFileMaxSizeMB
+	c.Log.MaxBackups = constants.LogFileMaxBackups
+	c.Log.MaxAgeDays = constants.LogFileMaxAgeDays
+	c.Log.EnableConsoleOutput = true // Console output enabled by default
+
+	c.Catalog.PersistIntervalSeconds = 300 // Persist every 5 minutes
+	c.Catalog.MaxMemoryCatalogSizeMB = 128 // 128 MB
+
+	c.Performance.QueryCacheSizeMB = 64 // 64 MB
+	c.Performance.MaxConcurrentQueries = 100
+
+	c.Debug.EnablePprof = false
+	c.Debug.PprofPort = 6060
+	c.Debug.EnableSQLTracing = false
 }
 
-// GetDefaultConfig returns a Config struct populated with sensible default values.
-// This is used if no configuration file is found or if certain fields are omitted.
-//
-// GetDefaultConfig 返回一个填充了合理默认值的 Config 结构体。
-// 当找不到配置文件或省略某些字段时使用。
-func GetDefaultConfig() *Config {
-	return &Config{
-		Server: ServerConfig{
-			Port:           constants.DefaultServerPort,
-			Host:           "0.0.0.0", // Listen on all interfaces by default
-			MaxConnections: constants.DefaultMaxConnections,
-			ReadTimeout:    30 * time.Second, // 30 seconds
-			WriteTimeout:   30 * time.Second, // 30 seconds
-			Charset:        constants.MySQLCharsetUTF8mb4,
-			Collation:      constants.MySQLCollationUTF8mb4Bin,
-		},
-		Storage: StorageConfig{
-			Engine:  enum.StorageEngineType_Badger,
-			DataDir: constants.DefaultDataDirPath,
-			Badger: BadgerConfig{
-				ValueLogFileSize:   constants.DefaultBadgerValueLogFileSize,
-				SyncWrites:         constants.DefaultBadgerSyncWrites,
-				VLogGCInterval:     5 * time.Minute, // Every 5 minutes
-				VLogGCDiscardRatio: 0.5,             // Discard ratio for GC
-			},
-			KVD: KVDConfig{ // Placeholder defaults
-				Path: "./data/kvd",
-			},
-		},
-		Log: LogConfig{
-			Level:    enum.LogLevel_INFO,
-			FilePath: constants.DefaultLogFilePath,
-		},
-		Security: SecurityConfig{
-			DefaultUser:     constants.DefaultUser,
-			DefaultPassword: constants.DefaultPassword,
-			AuthMethod:      enum.AuthMethod_CachingSha2Password, // Modern MySQL default
-			TLSEnabled:      false,
-			TLSCertPath:     "",
-			TLSKeyPath:      "",
-			TLSCaCertPath:   "",
-		},
-		Audit: AuditConfig{
-			Enabled:           true, // Audit logging enabled by default
-			FilePath:          constants.DefaultAuditLogPath,
-			LogQueries:        true,
-			LogConnections:    true,
-			LogAuthentication: true,
-		},
+// overrideWithEnv overrides configuration values with environment variables.
+// Environment variables are expected in the format GUOCEDB_SECTION_FIELD (e.g., GUOCEDB_NETWORK_MYSQLPORT).
+func (c *Config) overrideWithEnv() {
+	logger := log.GetLogger().With(zap.String("component", enum.ComponentConfig.String()))
+
+	// Use reflection or explicit checks for each field for robust handling.
+	// For simplicity, showing a few examples. A more generic solution would use reflection.
+
+	if val := os.Getenv("GUOCEDB_SERVER_DATAPATH"); val != "" {
+		c.Server.DataPath = val
+		logger.Debug("Config override by env", zap.String("key", "GUOCEDB_SERVER_DATAPATH"), zap.String("value", val))
+	}
+	if val := os.Getenv("GUOCEDB_NETWORK_MYSQLPORT"); val != "" {
+		if port, err := ParseInt(val); err == nil {
+			c.Network.MySQLPort = port
+			logger.Debug("Config override by env", zap.String("key", "GUOCEDB_NETWORK_MYSQLPORT"), zap.Int("value", port))
+		} else {
+			logger.Warn("Invalid GUOCEDB_NETWORK_MYSQLPORT environment variable", zap.String("value", val), zap.Error(err))
+		}
+	}
+	if val := os.Getenv("GUOCEDB_LOG_LEVEL"); val != "" {
+		// Validate against enum values to prevent invalid log levels
+		if _, err := enum.ParseLogLevel(strings.ToUpper(val)); err == nil {
+			c.Log.Level = strings.ToUpper(val)
+			logger.Debug("Config override by env", zap.String("key", "GUOCEDB_LOG_LEVEL"), zap.String("value", val))
+		} else {
+			logger.Warn("Invalid GUOCEDB_LOG_LEVEL environment variable", zap.String("value", val), zap.Error(err))
+		}
+	}
+	if val := os.Getenv("GUOCEDB_LOG_FILEPATH"); val != "" {
+		c.Log.FilePath = val
+		logger.Debug("Config override by env", zap.String("key", "GUOCEDB_LOG_FILEPATH"), zap.String("value", val))
+	}
+	if val := os.Getenv("GUOCEDB_SECURITY_ROOTPASSWORD"); val != "" {
+		c.Security.RootPassword = val
+		logger.Warn("Root password overridden by environment variable. Ensure this is secure!", zap.String("key", "GUOCEDB_SECURITY_ROOTPASSWORD"))
+	}
+	// ... (add more environment variable checks for other critical fields)
+}
+
+// sanitizePaths ensures that paths are absolute and creates directories if they don't exist.
+func (c *Config) sanitizePaths() {
+	logger := log.GetLogger().With(zap.String("component", enum.ComponentConfig.String()))
+
+	// DataPath
+	c.Server.DataPath = expandPath(c.Server.DataPath)
+	if err := os.MkdirAll(c.Server.DataPath, 0755); err != nil {
+		logger.Error("Failed to create data directory", zap.String("path", c.Server.DataPath), zap.Error(err))
+	}
+
+	// BadgerDB Path
+	if c.Storage.Badger.Path == "" {
+		c.Storage.Badger.Path = filepath.Join(c.Server.DataPath, "badger") // Default if not specified in config
+	}
+	c.Storage.Badger.Path = expandPath(c.Storage.Badger.Path)
+	if err := os.MkdirAll(c.Storage.Badger.Path, 0755); err != nil {
+		logger.Error("Failed to create BadgerDB data directory", zap.String("path", c.Storage.Badger.Path), zap.Error(err))
+	}
+
+	// Log File Path
+	if c.Log.FilePath != "" {
+		c.Log.FilePath = expandPath(c.Log.FilePath)
+		logDir := filepath.Dir(c.Log.FilePath)
+		if err := os.MkdirAll(logDir, 0755); err != nil {
+			logger.Error("Failed to create log directory", zap.String("path", logDir), zap.Error(err))
+		}
+	}
+
+	// PidFile path
+	if c.Server.PidFile != "" {
+		c.Server.PidFile = expandPath(c.Server.PidFile)
+		pidDir := filepath.Dir(c.Server.PidFile)
+		if err := os.MkdirAll(pidDir, 0755); err != nil {
+			logger.Error("Failed to create PID file directory", zap.String("path", pidDir), zap.Error(err))
+		}
+	}
+
+	// TLS cert/key/ca paths
+	if c.Security.TLS.EnableTLS {
+		if c.Security.TLS.CertFile != "" {
+			c.Security.TLS.CertFile = expandPath(c.Security.TLS.CertFile)
+		}
+		if c.Security.TLS.KeyFile != "" {
+			c.Security.TLS.KeyFile = expandPath(c.Security.TLS.KeyFile)
+		}
+		if c.Security.TLS.CAFile != "" {
+			c.Security.TLS.CAFile = expandPath(c.Security.TLS.CAFile)
+		}
 	}
 }
 
-// ValidateConfig performs basic validation on the loaded configuration.
-// It checks for sensible values and potential inconsistencies.
-// Returns an error if validation fails.
-//
-// ValidateConfig 对加载的配置执行基本验证。
-// 它检查合理的值和潜在的不一致性。
-// 如果验证失败，则返回错误。
-func (c *Config) ValidateConfig() error {
-	if c.Server.Port <= 0 || c.Server.Port > 65535 {
-		return fmt.Errorf("server port must be between 1 and 65535, got %d", c.Server.Port)
-	}
-	if c.Server.MaxConnections <= 0 {
-		return fmt.Errorf("max_connections must be a positive integer, got %d", c.Server.MaxConnections)
-	}
-	if c.Server.ReadTimeout <= 0 {
-		return fmt.Errorf("read_timeout must be a positive duration")
-	}
-	if c.Server.WriteTimeout <= 0 {
-		return fmt.Errorf("write_timeout must be a positive duration")
-	}
-
-	if c.Storage.DataDir == "" {
-		return fmt.Errorf("storage data_dir cannot be empty")
-	}
-	if _, err := enum.ParseStorageEngineType(c.Storage.Engine.String()); err != nil {
-		return fmt.Errorf("invalid storage engine type: %w", err)
-	}
-
-	// Specific Badger validation
-	if c.Storage.Engine == enum.StorageEngineType_Badger {
-		if c.Storage.Badger.ValueLogFileSize <= 0 {
-			return fmt.Errorf("badger.value_log_file_size must be a positive integer")
-		}
-		if c.Storage.Badger.VLogGCInterval <= 0 {
-			return fmt.Errorf("badger.vlog_gc_interval must be a positive duration")
-		}
-		if c.Storage.Badger.VLogGCDiscardRatio < 0 || c.Storage.Badger.VLogGCDiscardRatio > 1 {
-			return fmt.Errorf("badger.vlog_gc_discard_ratio must be between 0 and 1")
+// expandPath expands home directory (~) and makes path absolute.
+func expandPath(path string) string {
+	if strings.HasPrefix(path, "~") {
+		homeDir, err := os.UserHomeDir()
+		if err == nil {
+			path = filepath.Join(homeDir, path[1:])
 		}
 	}
+	absPath, err := filepath.Abs(path)
+	if err == nil {
+		return absPath
+	}
+	return path // Fallback if absolute path conversion fails
+}
 
-	if _, err := enum.ParseLogLevel(c.Log.Level.String()); err != nil {
-		return fmt.Errorf("invalid log level: %w", err)
+// ParseInt is a helper to parse string to int, used for env variables.
+func ParseInt(s string) (int, error) {
+	var i int
+	_, err := fmt.Sscanf(s, "%d", &i)
+	return i, err
+}
+
+// ValidateConfig can be used to perform more complex semantic validations after loading.
+func ValidateConfig() error {
+	cfg := GetConfig()
+	if cfg == nil {
+		return errors.NewGuocedbError(enum.ErrConfiguration, errors.CodeConfigLoadFailed, "configuration not loaded", nil)
 	}
 
-	if c.Security.TLSEnabled {
-		if c.Security.TLSCertPath == "" || c.Security.TLSKeyPath == "" {
-			return fmt.Errorf("tls_cert_path and tls_key_path must be specified when TLS is enabled")
+	// Example validation: MySQLPort cannot be 0
+	if cfg.Network.MySQLPort == 0 {
+		return errors.NewGuocedbError(enum.ErrConfiguration, errors.CodeConfigInvalidValue, "MySQLPort cannot be 0", nil)
+	}
+
+	// Example validation: Check if dataPath is writable
+	if _, err := os.Stat(cfg.Server.DataPath); err != nil {
+		if os.IsNotExist(err) {
+			return errors.NewGuocedbError(enum.ErrConfiguration, errors.CodeConfigInvalidValue,
+				fmt.Sprintf("data path does not exist: %s", cfg.Server.DataPath), err)
 		}
-		// Further validation for existence of files could be added here
+		// Attempt to create a dummy file to check writability
+		testFile := filepath.Join(cfg.Server.DataPath, "test_write.tmp")
+		if writeErr := os.WriteFile(testFile, []byte("test"), 0644); writeErr != nil {
+			return errors.NewGuocedbError(enum.ErrConfiguration, errors.CodePermissionDenied,
+				fmt.Sprintf("data path is not writable: %s", cfg.Server.DataPath), writeErr)
+		}
+		os.Remove(testFile) // Clean up test file
 	}
 
-	if c.Audit.Enabled && c.Audit.FilePath == "" {
-		return fmt.Errorf("audit.file_path cannot be empty when audit logging is enabled")
+	// Validate Log Level
+	if _, err := enum.ParseLogLevel(cfg.Log.Level); err != nil {
+		return errors.NewGuocedbError(enum.ErrConfiguration, errors.CodeConfigInvalidValue,
+			fmt.Sprintf("invalid log level specified: %s", cfg.Log.Level), err)
 	}
 
-	// Add more validation rules as the config grows
+	// Validate storage engine type
+	// This assumes enum.StorageEngineType has a String() method and ParseStorageEngineType function
+	// For example, in common/types/enum/enum.go:
+	// func ParseStorageEngineType(s string) (StorageEngineType, error) { ... }
+	// if _, err := enum.ParseStorageEngineType(cfg.Storage.StorageEngine); err != nil {
+	// 	return errors.NewGuocedbError(enum.ErrConfiguration, errors.CodeConfigInvalidValue,
+	// 		fmt.Sprintf("unsupported storage engine: %s", cfg.Storage.StorageEngine), err)
+	// }
+
+	// Add more complex validations here...
 	return nil
 }
+
+//Personal.AI order the ending

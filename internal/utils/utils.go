@@ -1,315 +1,204 @@
+// Package utils defines common utility functions and helper methods used internally
+// within the Guocedb project. These functions are not intended for external exposure.
+// This file centralizes various helpers such as string manipulations, slice operations,
+// time conversions, and file path handling, reducing code duplication and improving
+// development efficiency across internal modules.
 package utils
 
 import (
-	"fmt"
-	"os"
-	"reflect" // Used for generic slice contains check, use with caution
-	"strconv"
-	"strings"
+	"crypto/rand"   // For secure random number generation.
+	"encoding/hex"  // For encoding random bytes to string.
+	"fmt"           // For error formatting.
+	"io"            // For io.CopyN.
+	"os"            // For file operations.
+	"path/filepath" // For path manipulation.
+	"runtime"       // For getting caller information (e.g., for stack traces).
+	"strings"       // For string manipulation.
+	"time"          // For time-related utilities.
+
+	"github.com/turtacn/guocedb/common/errors"     // For unified error handling.
+	"github.com/turtacn/guocedb/common/types/enum" // For component types in errors/logging.
 )
 
-// --- File System Utilities ---
-// --- 文件系统实用程序 ---
+// GenerateRandomBytes generates a cryptographically secure random byte slice of the given length.
+// This is useful for salt generation, session tokens, etc.
+func GenerateRandomBytes(n int) ([]byte, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return nil, errors.NewGuocedbError(enum.ErrSecurity, errors.CodeEncryptionFailed,
+			fmt.Sprintf("failed to generate random bytes of length %d", n), err)
+	}
+	return b, nil
+}
 
-// FileExists checks if a file or directory exists at the given path.
-// FileExists 检查给定路径的文件或目录是否存在。
-func FileExists(path string) bool {
-	_, err := os.Stat(path)
-	// Check if error is "not exist"
-	// 检查错误是否为“不存在”
-	// return !os.IsNotExist(err)
-	// A more explicit check: nil means exists, IsNotExist means doesn't exist.
-	// 更明确的检查：nil 表示存在，IsNotExist 表示不存在。
-	if err == nil {
-		return true // File or directory exists // 文件或目录存在
+// GenerateRandomHex generates a cryptographically secure random hexadecimal string of the given length.
+// The resulting string will be twice the length of the byte count (e.g., 16 bytes -> 32 hex chars).
+func GenerateRandomHex(n int) (string, error) {
+	bytes, err := GenerateRandomBytes(n)
+	if err != nil {
+		return "", err
 	}
-	if os.IsNotExist(err) {
-		return false // File or directory does not exist // 文件或目录不存在
+	return hex.EncodeToString(bytes), nil
+}
+
+// ClampInt64 clamps an int64 value between a minimum and maximum boundary.
+func ClampInt64(val, min, max int64) int64 {
+	if val < min {
+		return min
 	}
-	// Other errors (e.g., permission denied) are treated as "doesn't exist"
-	// for simplicity in many checks, but could be handled differently if needed.
-	// 为简化许多检查，其他错误（例如权限被拒绝）被视为“不存在”，
-	// 但如果需要，可以不同地处理。
-	// Consider logging err here if unexpected errors are important.
-	// 如果意外错误很重要，请考虑在此处记录错误。
-	// log.Warnf("Unexpected error checking file existence for '%s': %v", path, err)
+	if val > max {
+		return max
+	}
+	return val
+}
+
+// ContainsString checks if a string exists in a slice of strings.
+func ContainsString(slice []string, s string) bool {
+	for _, item := range slice {
+		if item == s {
+			return true
+		}
+	}
 	return false
 }
 
-// IsDir checks if the given path exists and is a directory.
-// IsDir 检查给定路径是否存在并且是目录。
+// RemoveString removes the first occurrence of a string from a slice of strings.
+func RemoveString(slice []string, s string) []string {
+	for i, item := range slice {
+		if item == s {
+			return append(slice[:i], slice[i+1:]...)
+		}
+	}
+	return slice
+}
+
+// ConvertDuration parses a duration string (e.g., "5s", "1m", "1h") into time.Duration.
+// It returns an error if the string format is invalid.
+func ConvertDuration(s string) (time.Duration, error) {
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, errors.NewGuocedbError(enum.ErrInvalidArgument, errors.CodeInvalidInput,
+			fmt.Sprintf("invalid duration string '%s'", s), err)
+	}
+	return d, nil
+}
+
+// PathExists checks if a file or directory exists at the given path.
+func PathExists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, errors.NewGuocedbError(enum.ErrStorage, errors.CodeStorageIOError,
+		fmt.Sprintf("failed to check path existence for %s", path), err)
+}
+
+// IsDir checks if the given path is a directory.
 func IsDir(path string) (bool, error) {
-	stat, err := os.Stat(path)
+	info, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return false, nil // Doesn't exist, so not a directory // 不存在，因此不是目录
+			return false, nil // Path does not exist, so it's not a directory.
 		}
-		return false, fmt.Errorf("failed to stat path '%s': %w", path, err) // Other error // 其他错误
+		return false, errors.NewGuocedbError(enum.ErrStorage, errors.CodeStorageIOError,
+			fmt.Sprintf("failed to get file info for %s", path), err)
 	}
-	return stat.IsDir(), nil
+	return info.IsDir(), nil
 }
 
-// IsFile checks if the given path exists and is a regular file.
-// IsFile 检查给定路径是否存在并且是常规文件。
-func IsFile(path string) (bool, error) {
-	stat, err := os.Stat(path)
+// CopyFile copies a file from src to dst.
+func CopyFile(src, dst string) error {
+	sourceFile, err := os.Open(src)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil // Doesn't exist, so not a file // 不存在，因此不是文件
-		}
-		return false, fmt.Errorf("failed to stat path '%s': %w", path, err) // Other error // 其他错误
+		return errors.NewGuocedbError(enum.ErrStorage, errors.CodeStorageIOError,
+			fmt.Sprintf("failed to open source file %s", src), err)
 	}
-	// Check if it's not a directory and not other special types (symlink, etc.)
-	// 检查它是否不是目录，也不是其他特殊类型（符号链接等）
-	return !stat.IsDir() && stat.Mode().IsRegular(), nil
-}
+	defer sourceFile.Close()
 
-// EnsureDir creates a directory at the given path if it doesn't already exist.
-// It creates parent directories as needed (like mkdir -p).
-// EnsureDir 如果给定路径的目录尚不存在，则创建该目录。
-// 它根据需要创建父目录（类似于 mkdir -p）。
-func EnsureDir(path string) error {
-	// os.MkdirAll returns nil if the directory already exists.
-	// 如果目录已存在，os.MkdirAll 返回 nil。
-	// 0755 provides read/write/execute for owner, read/execute for group/others. Common default.
-	// 0755 为所有者提供读/写/执行权限，为组/其他人提供读/执行权限。常见的默认设置。
-	err := os.MkdirAll(path, 0755)
+	destFile, err := os.Create(dst)
 	if err != nil {
-		return fmt.Errorf("failed to create directory '%s': %w", path, err)
+		return errors.NewGuocedbError(enum.ErrStorage, errors.CodeStorageIOError,
+			fmt.Sprintf("failed to create destination file %s", dst), err)
+	}
+	defer destFile.Close()
+
+	_, err = io.Copy(destFile, sourceFile)
+	if err != nil {
+		return errors.NewGuocedbError(enum.ErrStorage, errors.CodeStorageIOError,
+			fmt.Sprintf("failed to copy file from %s to %s", src, dst), err)
 	}
 	return nil
 }
 
-// --- String Utilities ---
-// --- 字符串实用程序 ---
+// GetCallerInfo returns the file name and line number of the caller.
+// Useful for debugging or augmenting log messages with source location.
+func GetCallerInfo(skip int) (file string, line int) {
+	_, file, line, ok := runtime.Caller(skip + 1) // skip + 1 to get the actual caller of GetCallerInfo
+	if !ok {
+		return "unknown", 0
+	}
+	return filepath.Base(file), line // Return only the base file name.
+}
 
-// ToLowerCamelCase converts a snake_case or kebab-case string to lowerCamelCase.
-// Example: "user_id" -> "userId", "log-level" -> "logLevel"
-// ToLowerCamelCase 将蛇形命名法（snake_case）或短横线命名法（kebab-case）字符串转换为小驼峰式命名法（lowerCamelCase）。
-// 示例："user_id" -> "userId", "log-level" -> "logLevel"
-func ToLowerCamelCase(s string) string {
-	var result strings.Builder
-	nextUpper := false
+// CamelToSnakeCase converts a camelCase string to snake_case.
+func CamelToSnakeCase(s string) string {
+	var builder strings.Builder
 	for i, r := range s {
-		if r == '_' || r == '-' {
-			nextUpper = true
-		} else if nextUpper {
-			result.WriteRune(strings.ToUpper(string(r))[0]) // Convert rune to uppercase // 将 rune 转换为大写
-			nextUpper = false
+		if 'A' <= r && r <= 'Z' {
+			if i > 0 {
+				builder.WriteRune('_')
+			}
+			builder.WriteRune(r + 32) // Convert to lowercase
 		} else {
-			// First character should be lowercase // 第一个字符应为小写
-			if i == 0 {
-				result.WriteRune(strings.ToLower(string(r))[0])
-			} else {
-				result.WriteRune(r)
+			builder.WriteRune(r)
+		}
+	}
+	return builder.String()
+}
+
+// SnakeToCamelCase converts a snake_case string to camelCase.
+func SnakeToCamelCase(s string) string {
+	parts := strings.Split(s, "_")
+	var builder strings.Builder
+	for i, part := range parts {
+		if i == 0 {
+			builder.WriteString(part)
+		} else {
+			if len(part) > 0 {
+				builder.WriteString(strings.ToUpper(string(part[0])))
+				builder.WriteString(part[1:])
 			}
 		}
 	}
-	return result.String()
+	return builder.String()
 }
 
-// --- Pointer Dereferencing Helpers ---
-// These helpers safely dereference pointers, returning a default value if the pointer is nil.
-// --- 指针解引用辅助函数 ---
-// 这些辅助函数安全地解引用指针，如果指针为 nil，则返回默认值。
+// CalculateCRC32 calculates the CRC-32 checksum of a byte slice.
+// This can be used for data integrity checks.
+/*
+import "hash/crc32" // Uncomment this import for CalculateCRC32
 
-// PointerToString safely dereferences a *string, returning "" if nil.
-// PointerToString 安全地解引用 *string，如果为 nil 则返回 ""。
-func PointerToString(ptr *string) string {
-	if ptr == nil {
-		return ""
-	}
-	return *ptr
+func CalculateCRC32(data []byte) uint32 {
+	return crc32.ChecksumIEEE(data)
+}
+*/
+
+// BytesToHex converts a byte slice to its hexadecimal string representation.
+func BytesToHex(data []byte) string {
+	return hex.EncodeToString(data)
 }
 
-// PointerToStringDef safely dereferences a *string, returning a default value if nil.
-// PointerToStringDef 安全地解引用 *string，如果为 nil 则返回默认值。
-func PointerToStringDef(ptr *string, def string) string {
-	if ptr == nil {
-		return def
-	}
-	return *ptr
-}
-
-// PointerToInt64 safely dereferences an *int64, returning 0 if nil.
-// PointerToInt64 安全地解引用 *int64，如果为 nil 则返回 0。
-func PointerToInt64(ptr *int64) int64 {
-	if ptr == nil {
-		return 0
-	}
-	return *ptr
-}
-
-// PointerToInt64Def safely dereferences an *int64, returning a default value if nil.
-// PointerToInt64Def 安全地解引用 *int64，如果为 nil 则返回默认值。
-func PointerToInt64Def(ptr *int64, def int64) int64 {
-	if ptr == nil {
-		return def
-	}
-	return *ptr
-}
-
-// PointerToBool safely dereferences a *bool, returning false if nil.
-// PointerToBool 安全地解引用 *bool，如果为 nil 则返回 false。
-func PointerToBool(ptr *bool) bool {
-	if ptr == nil {
-		return false
-	}
-	return *ptr
-}
-
-// PointerToBoolDef safely dereferences a *bool, returning a default value if nil.
-// PointerToBoolDef 安全地解引用 *bool，如果为 nil 则返回默认值。
-func PointerToBoolDef(ptr *bool, def bool) bool {
-	if ptr == nil {
-		return def
-	}
-	return *ptr
-}
-
-// --- Slice Utilities ---
-// --- 切片实用程序 ---
-
-// StringInSlice checks if a string exists within a slice of strings.
-// StringInSlice 检查字符串是否存在于字符串切片中。
-func StringInSlice(target string, slice []string) bool {
-	for _, item := range slice {
-		if item == target {
-			return true
-		}
-	}
-	return false
-}
-
-// Int64InSlice checks if an int64 exists within a slice of int64s.
-// Int64InSlice 检查 int64 是否存在于 int64 切片中。
-func Int64InSlice(target int64, slice []int64) bool {
-	for _, item := range slice {
-		if item == target {
-			return true
-		}
-	}
-	return false
-}
-
-// Contains checks if a slice contains a specific element.
-// Uses reflection, so it's less performant than type-specific versions like StringInSlice.
-// Use sparingly or when generics are not available/suitable.
-// Contains 检查切片是否包含特定元素。
-// 使用反射，因此性能低于类型特定版本（如 StringInSlice）。
-// 请谨慎使用，或在泛型不可用/不适用时使用。
-func Contains(slice interface{}, element interface{}) bool {
-	sliceValue := reflect.ValueOf(slice)
-
-	if sliceValue.Kind() != reflect.Slice {
-		// Or return an error? For simplicity, return false.
-		// 或者返回错误？为简单起见，返回 false。
-		return false
-	}
-
-	for i := 0; i < sliceValue.Len(); i++ {
-		// Use reflect.DeepEqual for comparison to handle complex types,
-		// but simple equality check might be faster for basic types if guaranteed.
-		// 使用 reflect.DeepEqual 进行比较以处理复杂类型，
-		// 但如果保证是基本类型，简单的相等性检查可能更快。
-		if reflect.DeepEqual(sliceValue.Index(i).Interface(), element) {
-			// if sliceValue.Index(i).Interface() == element { // Faster for comparable types // 对于可比较类型更快
-			return true
-		}
-	}
-
-	return false
-}
-
-// RemoveStringFromSlice creates a new slice excluding all occurrences of the target string.
-// Preserves the order of the remaining elements.
-// RemoveStringFromSlice 创建一个新切片，排除目标字符串的所有出现。
-// 保留剩余元素的顺序。
-func RemoveStringFromSlice(slice []string, target string) []string {
-	result := make([]string, 0, len(slice)) // Pre-allocate capacity // 预分配容量
-	for _, item := range slice {
-		if item != target {
-			result = append(result, item)
-		}
-	}
-	// If the length hasn't changed, return the original slice to avoid allocation?
-	// Requires tracking if any element was actually removed.
-	// For simplicity, always return the new slice (which might be the same underlying array initially).
-	// 如果长度没有改变，是否返回原始切片以避免分配？
-	// 需要跟踪是否有任何元素实际被移除。
-	// 为简单起见，始终返回新切片（最初可能是相同的底层数组）。
-	return result
-}
-
-// --- Type Conversion Utilities ---
-// --- 类型转换实用程序 ---
-
-// StringToInt converts a string to an int, returning an error on failure.
-// StringToInt 将字符串转换为 int，失败时返回错误。
-func StringToInt(s string) (int, error) {
-	i, err := strconv.Atoi(s)
+// HexToBytes converts a hexadecimal string to a byte slice.
+func HexToBytes(s string) ([]byte, error) {
+	b, err := hex.DecodeString(s)
 	if err != nil {
-		return 0, fmt.Errorf("failed to convert string '%s' to int: %w", s, err)
+		return nil, errors.NewGuocedbError(enum.ErrInvalidArgument, errors.CodeInvalidInput,
+			fmt.Sprintf("invalid hex string '%s'", s), err)
 	}
-	return i, nil
+	return b, nil
 }
 
-// StringToIntDef converts a string to an int, returning a default value on failure.
-// StringToIntDef 将字符串转换为 int，失败时返回默认值。
-func StringToIntDef(s string, def int) int {
-	i, err := strconv.Atoi(s)
-	if err != nil {
-		return def
-	}
-	return i
-}
-
-// StringToInt64 converts a string to an int64, returning an error on failure.
-// StringToInt64 将字符串转换为 int64，失败时返回错误。
-func StringToInt64(s string) (int64, error) {
-	i, err := strconv.ParseInt(s, 10, 64) // Base 10, 64-bit // 10 进制，64 位
-	if err != nil {
-		return 0, fmt.Errorf("failed to convert string '%s' to int64: %w", s, err)
-	}
-	return i, nil
-}
-
-// StringToInt64Def converts a string to an int64, returning a default value on failure.
-// StringToInt64Def 将字符串转换为 int64，失败时返回默认值。
-func StringToInt64Def(s string, def int64) int64 {
-	i, err := strconv.ParseInt(s, 10, 64)
-	if err != nil {
-		return def
-	}
-	return i
-}
-
-// StringToBool converts a string to a bool, returning an error on failure.
-// Recognizes "true", "false", "1", "0". Case-insensitive.
-// StringToBool 将字符串转换为 bool，失败时返回错误。
-// 识别 "true", "false", "1", "0"。不区分大小写。
-func StringToBool(s string) (bool, error) {
-	sLower := strings.ToLower(strings.TrimSpace(s))
-	switch sLower {
-	case "true", "1":
-		return true, nil
-	case "false", "0":
-		return false, nil
-	default:
-		b, err := strconv.ParseBool(s) // Standard library handles "true", "false" case-insensitively
-		if err != nil {
-			return false, fmt.Errorf("failed to convert string '%s' to bool: %w", s, err)
-		}
-		return b, nil // Should not be reached due to switch, but for completeness // 由于 switch 不应到达，但为了完整性
-	}
-}
-
-// StringToBoolDef converts a string to a bool, returning a default value on failure.
-// StringToBoolDef 将字符串转换为 bool，失败时返回默认值。
-func StringToBoolDef(s string, def bool) bool {
-	val, err := StringToBool(s)
-	if err != nil {
-		return def
-	}
-	return val
-}
+//Personal.AI order the ending

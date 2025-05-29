@@ -1,110 +1,90 @@
+// Package badger implements the BadgerDB specific transaction adapter for Guocedb.
+// This file is responsible for adapting the transaction interface defined in interfaces/storage.go
+// to BadgerDB's transaction mechanism. It manages BadgerDB's read and write transactions,
+// ensuring ACID properties at the Badger layer. It relies on the transaction interface
+// from interfaces/storage.go and interacts with the BadgerDB client library.
+// storage/engines/badger/badger.go will call this file to create and manage transactions.
 package badger
 
 import (
-	"context"
+	"fmt"
+	"time"
 
-	"github.com/dgraph-io/badger/v4"
-	"github.com/google/uuid" // For generating transaction IDs
+	"github.com/dgraph-io/badger/v4" // Import BadgerDB client library
 
-	"github.com/turtacn/guocedb/common/errors" // Core sortable encoding functions
-	"github.com/turtacn/guocedb/interfaces"    // For Schema, ColumnDefinition, IndexDefinition
+	"github.com/turtacn/guocedb/common/errors"
+	"github.com/turtacn/guocedb/common/types/enum"
+	"github.com/turtacn/guocedb/interfaces" // Import the defined interfaces
 )
 
-// Compile-time check to ensure badgerTransaction implements interfaces.Transaction.
-var _ interfaces.Transaction = (*badgerTransaction)(nil)
+// ensure that BadgerTransaction implements the interfaces.Transaction interface.
+var _ interfaces.Transaction = (*BadgerTransaction)(nil)
 
-// badgerTransaction wraps a Badger transaction (*badger.Txn) to implement
-// the interfaces.Transaction interface required by the Storage Abstraction Layer.
-type badgerTransaction struct {
-	// The underlying Badger read-write or read-only transaction.
-	txn *badger.Txn
-	// A unique identifier generated for this transaction wrapper.
-	id string
-	// Indicates if the underlying Badger transaction was created as read-only.
+// BadgerTransaction implements the interfaces.Transaction interface for BadgerDB.
+type BadgerTransaction struct {
+	txn      *badger.Txn // The underlying BadgerDB transaction
+	id       interfaces.ID
 	readOnly bool
-	// Reference to the engine, potentially useful for accessing configuration or metrics.
-	// engine *badgerEngine // Uncomment if needed later
+	timeout  time.Duration // Timeout for the transaction
+	// Optional: context.Context with timeout to cancel long-running transactions
 }
 
-// newBadgerTransaction creates a new wrapper instance for a given Badger transaction.
-// It assigns a unique ID and stores the read-only status.
-func newBadgerTransaction(txn *badger.Txn, readOnly bool /*, engine *badgerEngine*/) *badgerTransaction {
-	return &badgerTransaction{
+// NewBadgerTransaction creates a new BadgerTransaction.
+// It wraps a BadgerDB transaction and provides Guocedb's transaction interface.
+func NewBadgerTransaction(badgerDB *badger.DB, readOnly bool, id interfaces.ID) *BadgerTransaction {
+	txn := badgerDB.NewTransaction(readOnly)
+	return &BadgerTransaction{
 		txn:      txn,
-		id:       uuid.NewString(), // Generate a unique ID for this SAL transaction
+		id:       id,
 		readOnly: readOnly,
-		// engine: engine, // Uncomment if needed later
+		timeout:  0, // No timeout by default
 	}
 }
 
-// ID returns the unique identifier assigned to this transaction wrapper.
-func (bt *badgerTransaction) ID() string {
-	return bt.id
+// Commit attempts to commit the BadgerDB transaction.
+func (bt *BadgerTransaction) Commit() error {
+	err := bt.txn.Commit()
+	if err != nil {
+		return errors.NewGuocedbError(enum.ErrTransaction, errors.CodeTransactionCommitFailed,
+			fmt.Sprintf("failed to commit BadgerDB transaction ID %d", bt.id), err)
+	}
+	return nil
 }
 
-// IsReadOnly returns true if the underlying Badger transaction is read-only.
-func (bt *badgerTransaction) IsReadOnly() bool {
+// Rollback aborts the BadgerDB transaction.
+func (bt *BadgerTransaction) Rollback() error {
+	bt.txn.Discard() // BadgerDB's equivalent of rollback for read-write transactions
+	return nil
+}
+
+// IsReadOnly returns true if the transaction is read-only.
+func (bt *BadgerTransaction) IsReadOnly() bool {
 	return bt.readOnly
 }
 
-// Commit attempts to commit the underlying Badger transaction.
-// It wraps any Badger error into a GuoceDB storage error.
-// It respects context cancellation before attempting the commit.
-func (bt *badgerTransaction) Commit(ctx context.Context) error {
-	// Check for context cancellation before attempting the potentially blocking commit.
-	select {
-	case <-ctx.Done():
-		// Context was cancelled, ensure the transaction is discarded.
-		bt.txn.Discard() // Discard best-effort on cancellation
-		return errors.Wrapf(ctx.Err(), errors.ErrCodeTransactionAborted, "transaction %s commit aborted due to context cancellation", bt.id)
-	default:
-		// Context is still valid, proceed with commit.
-	}
-
-	// Attempt to commit the Badger transaction.
-	err := bt.txn.Commit()
-	if err != nil {
-		// Don't call Discard here, Commit failed, transaction is already aborted by Badger.
-		// Wrap the Badger error. Common errors include ErrConflict.
-		code := errors.ErrCodeTransactionCommitFailed
-		if err == badger.ErrConflict {
-			code = errors.ErrCodeTransactionConflict
-		}
-		return errors.Wrapf(err, code, "failed to commit badger transaction %s", bt.id)
-	}
-
-	// Commit successful. The underlying bt.txn is no longer valid after Commit().
-	return nil
+// ID returns the unique identifier for this transaction.
+func (bt *BadgerTransaction) ID() interfaces.ID {
+	return bt.id
 }
 
-// Rollback aborts the underlying Badger transaction using Discard().
-// Badger's Discard() does not return an error.
-// It respects context cancellation minimally (checks before discard).
-func (bt *badgerTransaction) Rollback(ctx context.Context) error {
-	// Check for context cancellation, although Discard is usually very fast.
-	select {
-	case <-ctx.Done():
-		// Log maybe? Discard should still be called for cleanup.
-		// Discarding anyway as it's a cleanup operation.
-	default:
-		// Proceed
-	}
-
-	// Discard the Badger transaction. This cleans up resources.
-	// It's safe to call Discard() multiple times or after Commit()/Discard().
-	bt.txn.Discard()
-
-	// The underlying bt.txn is no longer valid after Discard().
-	// Our interface expects an error return, but Badger's Discard doesn't provide one.
-	return nil
+// SetTimeout sets a timeout for the transaction.
+// Note: BadgerDB's native transaction doesn't directly support a timeout parameter
+// in the same way as some other databases (e.g., for automatic rollback).
+// This timeout would need to be enforced externally (e.g., via a context.Context
+// passed through the transaction's lifetime or a background goroutine).
+// For now, we store the timeout duration but don't actively enforce it within this method.
+// Enforcement would typically happen in the compute layer's transaction manager.
+func (bt *BadgerTransaction) SetTimeout(d time.Duration) {
+	bt.timeout = d
+	// In a real implementation, you might pass a context.Context with timeout
+	// to the BadgerDB transaction operations, or manage it externally.
 }
 
-// --- Helper for accessing the underlying transaction ---
-
-// badgerTxn returns the underlying *badger.Txn.
-// This is an internal helper used by other parts of the badger engine adapter
-// (like badgerTable, badgerIndex) to perform operations within the transaction context.
-// It assumes the caller knows the transaction is valid (not yet committed or rolled back).
-func (bt *badgerTransaction) badgerTxn() *badger.Txn {
+// GetBadgerTxn returns the underlying BadgerDB transaction.
+// This is an internal helper to allow direct interaction with BadgerDB methods
+// within the badger package (e.g., in badger.go for actual K/V operations).
+func (bt *BadgerTransaction) GetBadgerTxn() *badger.Txn {
 	return bt.txn
 }
+
+//Personal.AI order the ending
