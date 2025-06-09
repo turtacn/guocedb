@@ -5,6 +5,7 @@ package errors
 
 import (
 	"fmt"     // Import fmt for error formatting.
+	"runtime"
 	"strings" // Import strings for potential string manipulation in error messages.
 
 	"github.com/turtacn/guocedb/common/types/enum" // Import enum for error categorization.
@@ -18,6 +19,8 @@ type GuocedbError struct {
 	Message  string                // Message is a human-readable error description.
 	Cause    error                 // Cause holds the underlying error, if any, allowing for error chaining.
 	Severity enum.LogLevel         // Severity indicates the recommended logging level for this error.
+	stack    string                // Internal: Stack trace at the point the error was created
+
 }
 
 // NewGuocedbError creates a new GuocedbError instance.
@@ -39,6 +42,7 @@ func NewGuocedbError(errType enum.GuocedbErrorType, code int, msg string, cause 
 		Message:  msg,
 		Cause:    cause,
 		Severity: severity,
+		stack: getStackTrace(),
 	}
 }
 
@@ -46,7 +50,7 @@ func NewGuocedbError(errType enum.GuocedbErrorType, code int, msg string, cause 
 // It provides a formatted string representation of the error, including its type, code, and message.
 func (e *GuocedbError) Error() string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("[%s] ErrorCode:%d - %s", e.Type.String(), e.Code, e.Message))
+	sb.WriteString(fmt.Sprintf("[%s] ErrorCode:%d - %s", e.Type, e.Code, e.Message))
 	if e.Cause != nil {
 		sb.WriteString(fmt.Sprintf(": %v", e.Cause)) // Append the cause if it exists.
 	}
@@ -91,6 +95,68 @@ func Unwrap(err error) error {
 		return uw.Unwrap()
 	}
 	return nil
+}
+
+// Wrap wraps an existing error with a GuocedbError, adding a context message.
+// If the original error is already a GuocedbError, it creates a new GuocedbError
+// that wraps the original one and includes the new context.
+// If the original error is a standard error, it creates a new GuocedbError with
+// the standard error as the underlying error.
+func Wrap(err error, cause string) error {
+	if err == nil {
+		return nil
+	}
+
+	// Capture the stack trace at the point of wrapping
+	currentStack := getStackTrace()
+
+	if gErr, ok := err.(*GuocedbError); ok {
+		// If the original error is already a GuocedbError, we enrich it.
+		// We inherit Type, Code, and Severity from the original error,
+		// and set the original gErr as the Cause for the new error.
+		return &GuocedbError{
+			Type:     gErr.Type,
+			Code:     gErr.Code,
+			Message:  fmt.Sprintf("%s: %s", cause, gErr.Message), // Prepend new context
+			Cause:    gErr, // The original GuocedbError is the cause
+			Severity: gErr.Severity,
+			stack:    currentStack, // New stack for the wrapping point
+		}
+	}
+
+	// If the original error is a standard `error`, we create a new GuocedbError
+	// with a default internal type/code/severity.
+	return &GuocedbError{
+		Type:     enum.ErrUnknown,    // Default to internal error type
+		Code:     CodeInternalError,         // Default to unknown sub-code
+		Message:  cause,               // The new message is the provided cause
+		Cause:    err,                 // The original standard error is the cause
+		Severity: enum.LogLevelError,  // Default severity for wrapped standard errors
+		stack:    currentStack,        // New stack for the wrapping point
+	}
+}
+
+// getStackTrace retrieves the stack trace at the point of the function call.
+func getStackTrace() string {
+	var sb strings.Builder
+	// Skip 2 frames: getStackTrace itself and the caller of getStackTrace (e.g., NewGuocedbError or Wrap)
+	for i := 2; ; i++ {
+		pc, file, line, ok := runtime.Caller(i)
+		if !ok {
+			break
+		}
+		// Only capture relevant project specific stack frames
+		// This helps filter out noisy runtime/library calls from the stack trace
+		if strings.Contains(file, "guocedb/") {
+			funcName := runtime.FuncForPC(pc).Name()
+			// Remove package path prefix for cleaner output
+			if idx := strings.LastIndex(funcName, "/"); idx != -1 {
+				funcName = funcName[idx+1:]
+			}
+			fmt.Fprintf(&sb, "\t%s:%d %s\n", file, line, funcName)
+		}
+	}
+	return sb.String()
 }
 
 // RegisterErrorCode can be used to register a specific error code with a corresponding message.

@@ -1,1 +1,131 @@
+// Copyright 2024 Guocedb Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package parser
+
+import (
+	"context"
+	"fmt"
+	"github.com/dolthub/go-mysql-server/sql"
+	ast "github.com/dolthub/vitess/go/vt/sqlparser"
+	"github.com/turtacn/guocedb/common/errors"
+	"strings"
+	"unicode"
+)
+
+// GuocedbParser 是 Guocedb 中 SQL 解析器的适配器
+type GuocedbParser struct {
+	internalParser Parser
+}
+
+// NewGuocedbParser 创建一个新的 GuocedbParser 实例
+func NewGuocedbParser() *GuocedbParser {
+	return &GuocedbParser{
+		internalParser: GlobalParser,
+	}
+}
+
+// Parse 解析 SQL 字符串并返回 AST
+func (p *GuocedbParser) Parse(ctx context.Context, query string) (ast.Statement, error) {
+	stmt, err := p.internalParser.ParseSimple(query)
+	if err != nil {
+		return nil, errors.Wrap(err, "SQL 解析失败")
+	}
+	sql.NewDatabaseProvider()
+	return stmt, nil
+}
+
+// GlobalParser is a temporary variable to expose Doltgres parser.
+// It defaults to MysqlParser.
+var GlobalParser Parser = NewMysqlParser()
+
+type Parser interface {
+	// ParseSimple takes a |query| and returns the parsed statement. If |query| represents a no-op statement,
+	// such as ";" or "-- comment", then implementations must return Vitess' ErrEmpty error.
+	ParseSimple(query string) (ast.Statement, error)
+	// Parse parses |query| using the default parser options of the ctx and returns the parsed statement
+	// along with the query string and remainder string if it's multiple queries. If |query| represents a
+	// no-op statement, such as ";" or "-- comment", then implementations must return Vitess' ErrEmpty error.
+	Parse( query string, multi bool) (ast.Statement, string, string, error)
+	// ParseWithOptions parses |query| using the given parser |options| and specified |delimiter|. The parsed statement
+	// is returned, along with the query string and remainder string if |multi| has been set to true and there are
+	// multiple statements in |query|. If |query| represents a no-op statement, such as ";" or "-- comment", then
+	// implementations must return Vitess' ErrEmpty error.
+	ParseWithOptions(query string, delimiter rune, multi bool, options ast.ParserOptions) (ast.Statement, string, string, error)
+	// ParseOneWithOptions parses the first query using specified parsing returns the parsed statement along with
+	// the index of the start of the next query. If |query| represents a no-op statement, such as ";" or "-- comment",
+	// then implementations must return Vitess' ErrEmpty error.
+	ParseOneWithOptions(string, ast.ParserOptions) (ast.Statement, int, error)
+	// QuoteIdentifier returns the identifier given quoted according to this parser's dialect. This is used to
+	// standardize identifiers that cannot be parsed without quoting, because they break the normal identifier naming
+	// rules (such as containing spaces)
+	QuoteIdentifier(identifier string) string
+}
+
+var _ Parser = &MysqlParser{}
+
+// MysqlParser is a mysql syntax parser used as parser in the engine for Dolt.
+type MysqlParser struct{}
+
+// NewMysqlParser creates new MysqlParser
+func NewMysqlParser() *MysqlParser {
+	return &MysqlParser{}
+}
+
+// ParseSimple implements Parser interface.
+func (m *MysqlParser) ParseSimple(query string) (ast.Statement, error) {
+	return ast.Parse(query)
+}
+
+// Parse implements Parser interface.
+func (m *MysqlParser) Parse(query string, multi bool) (ast.Statement, string, string, error) {
+	return m.ParseWithOptions(query, ';', multi, ast.ParserOptions{})
+}
+
+// ParseWithOptions implements Parser interface.
+func (m *MysqlParser) ParseWithOptions(query string, delimiter rune, multi bool, options ast.ParserOptions) (stmt ast.Statement, parsed, remainder string, err error) {
+	s := RemoveSpaceAndDelimiter(query, delimiter)
+	parsed = s
+
+	if !multi {
+		stmt, err = ast.ParseWithOptions(s, options)
+	} else {
+		var ri int
+		stmt, ri, err = ast.ParseOneWithOptions(s, options)
+		if ri != 0 && ri < len(s) {
+			parsed = s[:ri]
+			parsed = RemoveSpaceAndDelimiter(parsed, delimiter)
+			remainder = s[ri:]
+		}
+	}
+	return
+}
+
+// ParseOneWithOptions implements Parser interface.
+func (m *MysqlParser) ParseOneWithOptions(s string, options ast.ParserOptions) (ast.Statement, int, error) {
+	return ast.ParseOneWithOptions(s, options)
+}
+
+// RemoveSpaceAndDelimiter removes space characters and given delimiter characters from the given query.
+func RemoveSpaceAndDelimiter(query string, d rune) string {
+	query = strings.TrimSpace(query)
+	// trim spaces and empty statements
+	return strings.TrimRightFunc(query, func(r rune) bool {
+		return r == d || unicode.IsSpace(r)
+	})
+}
+
+func (m *MysqlParser) QuoteIdentifier(identifier string) string {
+	return fmt.Sprintf("`%s`", strings.ReplaceAll(identifier, "`", "``"))
+}
