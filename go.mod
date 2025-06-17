@@ -1,8 +1,6 @@
 module github.com/turtacn/guocedb
 
-go 1.23.0
-
-toolchain go1.23.6
+go 1.20
 
 require (
 	github.com/dgraph-io/badger/v4 v4.7.0
@@ -55,6 +53,7 @@ replace (
 	golang.org/x/sys => github.com/golang/sys v0.9.0 // 广泛用于 1.20
 	golang.org/x/tools => github.com/golang/tools v0.10.0 // 保守稳定
 	google.golang.org/grpc => github.com/grpc/grpc-go v1.54.0 // 兼容性强版本
-
+    go.opentelemetry.io/otel => go.opentelemetry.io/otel v1.21.0
+    go.opentelemetry.io/otel/semconv => go.opentelemetry.io/otel/semconv v1.21.0
 	google.golang.org/protobuf => github.com/protocolbuffers/protobuf-go v1.30.0
 )
