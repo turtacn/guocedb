@@ -2,7 +2,7 @@
 
 <img src="logo.png" alt="guocedb Logo" width="200" height="200">
 
-[![构建状态](https://github.com/turtacn/guocedb/actions/workflows/ci.yml/badge.svg)](https://github.com/turtacn/guocedb/actions)
+<!--[![构建状态](https://github.com/turtacn/guocedb/actions/workflows/ci.yml/badge.svg)](https://github.com/turtacn/guocedb/actions)-->
 [![Go Report Card](https://goreportcard.com/badge/github.com/turtacn/guocedb)](https://goreportcard.com/report/github.com/turtacn/guocedb)
 [![许可证](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![GoDoc](https://godoc.org/github.com/turtacn/guocedb?status.svg)](https://godoc.org/github.com/turtacn/guocedb)
