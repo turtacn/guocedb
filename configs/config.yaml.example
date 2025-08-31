@@ -1,0 +1,38 @@
+# Example configuration for guocedb server
+
+# Server configuration
+server:
+  host: "0.0.0.0"
+  port: 3306
+  grpcPort: 50051
+  maxConnections: 1024
+  timeout: 30 # in seconds
+
+# Storage configuration
+storage:
+  # Supported engines: "badger"
+  engine: "badger"
+  dataDir: "./data" # Directory to store database files
+
+  # BadgerDB-specific settings
+  badger:
+    valueLogFileSize: 1073741824 # 1GB
+    syncWrites: true
+
+# Security configuration
+security:
+  enableTls: false
+  certFile: "/path/to/cert.pem"
+  keyFile: "/path/to/key.pem"
+
+# Logging configuration
+log:
+  # Supported levels: "debug", "info", "warn", "error"
+  level: "info"
+  # Supported formats: "text", "json"
+  format: "text"
+
+# Metrics configuration
+metrics:
+  enable: true
+  port: 9100

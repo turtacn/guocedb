@@ -1,0 +1,30 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, build artifacts
+*.test
+/build
+/bin
+/vendor
+
+# Output of the go coverage tool, can be stored in temporary files
+*.out
+
+# Environment configuration
+.env
+.envrc
+
+# IDE settings
+.idea/
+.vscode/
+
+# Local guocedb data
+data/
+*.log
+
+# Mac-specific files
+.DS_Store

@@ -1,0 +1,71 @@
+// api/protobuf/mgmt/v1/management.proto
+syntax = "proto3";
+
+package mgmt.v1;
+
+import "google/protobuf/empty.proto";
+
+option go_package = "github.com/turtacn/guocedb/api/protobuf/mgmt/v1";
+
+// ManagementService provides APIs for managing the guocedb instance.
+service ManagementService {
+  // GetServerStatus retrieves the current status of the server.
+  rpc GetServerStatus(GetServerStatusRequest) returns (GetServerStatusResponse);
+
+  // CreateDatabase creates a new database.
+  rpc CreateDatabase(CreateDatabaseRequest) returns (google.protobuf.Empty);
+
+  // DropDatabase drops an existing database.
+  rpc DropDatabase(DropDatabaseRequest) returns (google.protobuf.Empty);
+
+  // ListDatabases lists all databases.
+  rpc ListDatabases(ListDatabasesRequest) returns (ListDatabasesResponse);
+
+  // Backup creates a backup of the database.
+  rpc Backup(BackupRequest) returns (BackupResponse);
+
+  // Restore restores a database from a backup.
+  rpc Restore(RestoreRequest) returns (google.protobuf.Empty);
+}
+
+// === Status Messages ===
+
+message GetServerStatusRequest {}
+
+message GetServerStatusResponse {
+  string version = 1;
+  string status = 2;
+  uint64 active_connections = 3;
+  uint64 uptime_seconds = 4;
+}
+
+// === Database Management Messages ===
+
+message CreateDatabaseRequest {
+  string name = 1;
+}
+
+message DropDatabaseRequest {
+  string name = 1;
+}
+
+message ListDatabasesRequest {}
+
+message ListDatabasesResponse {
+  repeated string names = 1;
+}
+
+// === Backup and Restore Messages ===
+
+message BackupRequest {
+  string backup_location = 1;
+}
+
+message BackupResponse {
+  string backup_path = 1;
+  uint64 backup_size_bytes = 2;
+}
+
+message RestoreRequest {
+  string backup_path = 1;
+}
