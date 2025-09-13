@@ -1,0 +1,36 @@
+name: Go CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+
+    - name: Tidy
+      run: go mod tidy
+
+    - name: Lint
+      run: |
+        chmod +x scripts/lint.sh
+        ./scripts/lint.sh
+
+    - name: Build
+      run: |
+        chmod +x scripts/build.sh
+        ./scripts/build.sh
+
+    - name: Test
+      run: |
+        chmod +x scripts/test.sh
+        ./scripts/test.sh

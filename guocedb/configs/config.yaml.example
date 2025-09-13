@@ -1,0 +1,30 @@
+# Example configuration for guocedb server.
+# Copy this file to config.yaml and modify as needed.
+
+server:
+  # The port for the MySQL protocol server to listen on.
+  mysql_port: 3306
+  # The port for the gRPC management API server to listen on.
+  grpc_port: 50051
+  # The port for the HTTP server (metrics, health checks, REST API) to listen on.
+  http_port: 8080
+  # Default timeout for operations.
+  timeout: "30s"
+
+storage:
+  # The storage engine to use. Currently supported: "badger".
+  engine: "badger"
+  # Path to the data directory where all data will be stored.
+  path: "./guocedb-data"
+  # Cache size for the storage engine in megabytes (MB).
+  cache_size_mb: 256
+
+security:
+  # Paths to TLS certificate and key files for secure connections (optional).
+  # If left empty, TLS will be disabled.
+  tls_cert_path: ""
+  tls_key_path: ""
+
+log:
+  # The logging level. Supported values: "debug", "info", "warn", "error".
+  level: "info"

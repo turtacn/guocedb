@@ -1,0 +1,31 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+vendor/
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when run with the
+# -o option
+*.out
+coverage.out
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Local config and data files
+config.yaml
+*.log
+guocedb-data/
+
+# IDE settings
+.idea/
+.vscode/
+*.swp
+*~
