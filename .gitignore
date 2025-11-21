@@ -9,7 +9,6 @@
 *.test
 /build
 /bin
-/vendor
 
 # Output of the go coverage tool, can be stored in temporary files
 *.out
@@ -29,3 +28,4 @@ data/
 # Mac-specific files
 .DS_Store
 /ai/
+/vendor/
