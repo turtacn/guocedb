@@ -249,6 +249,17 @@ The arrows show the primary data flow (solid lines) and cross-cutting concerns (
 
 For detailed technical architecture, see [docs/architecture.md](docs/architecture.md).
 
+### Core Type System
+
+`guocedb` features a standalone SQL type system designed for performance and compatibility. It is engineered to be fully compatible with `go-mysql-server`'s type system but remains completely independent in its implementation. This allows for greater flexibility and optimization opportunities within the compute layer.
+
+Key components include:
+- **`sql.Type`**: The core interface for all SQL types.
+- **`sql.Value`**: A container for SQL data of any type.
+- **`sql.Schema` and `sql.Row`**: Structures for defining table schemas and holding row data.
+
+For a detailed explanation of the type system's design, refer to the [Type System Design Document](docs/design/R1P1_Type_System_Design.md).
+
 ## CLI Demo
 
 ![guocedb CLI Demo](demo/guocedb-cli-demo.gif)
