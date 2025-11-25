@@ -2,9 +2,7 @@
 package interfaces
 
 import (
-	"context"
-
-	"github.com/dolthub/go-mysql-server/sql"
+	"github.com/turtacn/guocedb/compute/sql"
 )
 
 // Storage is the main interface for a storage engine.

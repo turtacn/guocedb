@@ -1,60 +1,42 @@
-// Package parser provides SQL parsing capabilities for guocedb.
 package parser
 
 import (
-	"sync"
+	"context"
 
-	"github.com/dolthub/go-mysql-server/sql"
-	"github.com/dolthub/go-mysql-server/sql/parse"
+	"github.com/turtacn/guocedb/compute/sql"
+	"github.com/turtacn/guocedb/compute/sql/parse"
 	"github.com/turtacn/guocedb/common/errors"
+	"github.com/turtacn/guocedb/common/constants"
 )
 
-// Parser is a wrapper around the go-mysql-server parser.
-type Parser struct {
-	mu    sync.RWMutex
-	cache map[string]sql.Node // A simple cache for parsed queries
+// Parser parses SQL queries into execution plans.
+type Parser interface {
+	Parse(ctx context.Context, sqlStr string) (sql.Node, error)
 }
 
-// NewParser creates a new SQL parser.
-func NewParser() *Parser {
-	return &Parser{
-		cache: make(map[string]sql.Node),
-	}
+// GMSParser is a parser implementation using go-mysql-server.
+type GMSParser struct {
 }
 
-// Parse parses a SQL query string and returns the abstract syntax tree (AST).
-func (p *Parser) Parse(ctx *sql.Context, query string) (sql.Node, error) {
-	// Check cache first
-	p.mu.RLock()
-	node, ok := p.cache[query]
-	p.mu.RUnlock()
-	if ok {
-		// Return a copy to avoid concurrent modification issues with the AST
-		return node.Copy(), nil
+// NewParser creates a new GMSParser.
+func NewParser() *GMSParser {
+	return &GMSParser{}
+}
+
+// Parse implements the Parser interface.
+func (p *GMSParser) Parse(ctx context.Context, sqlStr string) (sql.Node, error) {
+	// Ensure we have a *sql.Context
+	var sqlCtx *sql.Context
+	if c, ok := ctx.(*sql.Context); ok {
+		sqlCtx = c
+	} else {
+		// If not, we create one.
+		sqlCtx = sql.NewContext(ctx)
 	}
 
-	// Parse the query
-	parsedNode, err := parse.Parse(ctx, query)
+	node, err := parse.Parse(sqlCtx, sqlStr)
 	if err != nil {
-		return nil, errors.Wrapf(err, errors.ErrCodeSyntax, "failed to parse query: %s", query)
+		return nil, errors.New(constants.ErrCodeSyntax, err.Error())
 	}
-
-	// Add to cache
-	p.mu.Lock()
-	p.cache[query] = parsedNode.Copy()
-	p.mu.Unlock()
-
-	return parsedNode, nil
-}
-
-// ClearCache clears the parser's internal cache.
-func (p *Parser) ClearCache() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.cache = make(map[string]sql.Node)
-}
-
-// AddCustomSyntax would be a placeholder to extend the parser.
-func (p *Parser) AddCustomSyntax() error {
-	return errors.ErrNotImplemented
+	return node, nil
 }

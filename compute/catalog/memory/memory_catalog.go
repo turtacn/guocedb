@@ -4,7 +4,7 @@ package memory
 import (
 	"sync"
 
-	"github.com/dolthub/go-mysql-server/sql"
+	"github.com/turtacn/guocedb/compute/sql"
 	"github.com/turtacn/guocedb/compute/catalog"
 	"github.com/turtacn/guocedb/interfaces"
 )
