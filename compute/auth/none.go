@@ -3,11 +3,16 @@ package auth
 import (
 	"github.com/turtacn/guocedb/compute/sql"
 
-	"gopkg.in/src-d/go-vitess.v1/mysql"
+	"github.com/dolthub/vitess/go/mysql"
 )
 
 // None is an Auth method that always succeeds.
 type None struct{}
+
+// NewNone creates a new None auth.
+func NewNone() *None {
+	return &None{}
+}
 
 // Mysql implements Auth interface.
 func (n *None) Mysql() mysql.AuthServer {

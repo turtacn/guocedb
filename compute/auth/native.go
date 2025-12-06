@@ -11,8 +11,8 @@ import (
 
 	"github.com/turtacn/guocedb/compute/sql"
 
+	"github.com/dolthub/vitess/go/mysql"
 	"gopkg.in/src-d/go-errors.v1"
-	"gopkg.in/src-d/go-vitess.v1/mysql"
 )
 
 var (
@@ -130,15 +130,28 @@ func NewNativeFile(file string) (*Native, error) {
 
 // Mysql implements Auth interface.
 func (s *Native) Mysql() mysql.AuthServer {
-	auth := mysql.NewAuthServerStatic()
+	// Construct the JSON config that mysql.NewAuthServerStatic expects.
+	// Format: { "username": [ { "MysqlNativePassword": "..." } ] }
+	userMap := make(map[string][]map[string]string)
 
 	for k, v := range s.users {
-		auth.Entries[k] = []*mysql.AuthServerStaticEntry{
+		userMap[k] = []map[string]string{
 			{
-				MysqlNativePassword: v.Password,
-				Password:            v.Password},
+				"MysqlNativePassword": v.Password,
+				"Password":            v.Password,
+			},
 		}
 	}
+
+	jsonBytes, err := json.Marshal(userMap)
+	if err != nil {
+		// Should not happen with simple string map
+		panic(err)
+	}
+
+	// Initialize AuthServerStatic with the JSON string
+	// Passing empty string for file, the json string, and 0 for reload interval
+	auth := mysql.NewAuthServerStatic("", string(jsonBytes), 0)
 
 	return auth
 }

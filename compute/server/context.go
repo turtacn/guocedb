@@ -6,7 +6,7 @@ import (
 
 	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/turtacn/guocedb/compute/sql"
-	"gopkg.in/src-d/go-vitess.v1/mysql"
+	"github.com/dolthub/vitess/go/mysql"
 )
 
 // SessionBuilder creates sessions given a MySQL connection and a server address.
@@ -91,6 +91,19 @@ func (s *SessionManager) NewContextWithQuery(
 	)
 
 	return context
+}
+
+// SetDB sets the current database for the session at the given conn.
+func (s *SessionManager) SetDB(conn *mysql.Conn, db string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[conn.ConnectionID]
+	if !ok {
+		sess = s.builder(conn, s.addr)
+		s.sessions[conn.ConnectionID] = sess
+	}
+	sess.SetCurrentDatabase(db)
+	return nil
 }
 
 // CloseConn closes the connection in the session manager and all its

@@ -25,6 +25,7 @@ type ServerConfig struct {
 	GRPCPort      int    `mapstructure:"grpcPort"`
 	MaxConnections int    `mapstructure:"maxConnections"`
 	Timeout       int    `mapstructure:"timeout"`
+	Version       string `mapstructure:"version"`
 }
 
 // StorageConfig holds storage-related configuration.

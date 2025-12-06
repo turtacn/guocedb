@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"testing"
-	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
@@ -37,7 +36,6 @@ func TestMain(m *testing.M) {
 // helper function to start a server for testing
 func startTestServer() (*server.Manager, *config.Config) {
 	// This would be a more complete version of the setup.
-	cfg := config.Get() // Get default config
 	// Modify config for testing (e.g., random ports, temp data dir)
 
 	// ... initialize and start the server ...

@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/turtacn/guocedb/compute/sql"
-	"gopkg.in/src-d/go-vitess.v1/mysql"
+	"github.com/dolthub/vitess/go/mysql"
 
 	"github.com/sirupsen/logrus"
 )
@@ -26,16 +26,49 @@ type MysqlAudit struct {
 	audit AuditMethod
 }
 
-// ValidateHash sends authentication calls to an AuditMethod.
-func (m *MysqlAudit) ValidateHash(
-	salt []byte,
-	user string,
-	resp []byte,
-	addr net.Addr,
-) (mysql.Getter, error) {
-	getter, err := m.AuthServer.ValidateHash(salt, user, resp, addr)
-	m.audit.Authentication(user, addr.String(), err)
+// AuthMethods returns the wrapped auth methods.
+func (m *MysqlAudit) AuthMethods() []mysql.AuthMethod {
+	methods := m.AuthServer.AuthMethods()
+	wrapped := make([]mysql.AuthMethod, len(methods))
+	for i, method := range methods {
+		wrapped[i] = &AuditAuthMethod{
+			AuthMethod: method,
+			audit:      m.audit,
+		}
+	}
+	return wrapped
+}
 
+// DefaultAuthMethodDescription delegates to the underlying server.
+func (m *MysqlAudit) DefaultAuthMethodDescription() mysql.AuthMethodDescription {
+	return m.AuthServer.DefaultAuthMethodDescription()
+}
+
+// AuditAuthMethod wraps mysql.AuthMethod to intercept and log authentication.
+type AuditAuthMethod struct {
+	mysql.AuthMethod
+	audit AuditMethod
+}
+
+// HandleAuthPluginData intercepts the authentication step to log the result.
+func (am *AuditAuthMethod) HandleAuthPluginData(
+	conn *mysql.Conn,
+	user string,
+	serverAuthPluginData []byte,
+	clientAuthPluginData []byte,
+	remoteAddr net.Addr,
+) (mysql.Getter, error) {
+	getter, err := am.AuthMethod.HandleAuthPluginData(conn, user, serverAuthPluginData, clientAuthPluginData, remoteAddr)
+
+	// We use remoteAddr.String() for the address.
+	// If remoteAddr is nil (unlikely in real connection), we handle it safely?
+	// The interface implies it's a net.Addr, so String() should be safe if not nil.
+	addrStr := ""
+	if remoteAddr != nil {
+		addrStr = remoteAddr.String()
+	}
+
+	am.audit.Authentication(user, addrStr, err)
 	return getter, err
 }
 

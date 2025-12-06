@@ -59,7 +59,7 @@ func (t *LockTables) RowIter(ctx *sql.Context) (sql.RowIter, error) {
 		lockable, err := getLockable(l.Table)
 		if err != nil {
 			// If a table is not lockable, just skip it
-			ctx.Warn(0, err.Error())
+			ctx.Warn(0, "%s", err.Error())
 			continue
 		}
 

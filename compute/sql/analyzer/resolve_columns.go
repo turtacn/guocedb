@@ -9,7 +9,7 @@ import (
 	"github.com/turtacn/guocedb/compute/sql"
 	"github.com/turtacn/guocedb/compute/sql/expression"
 	"github.com/turtacn/guocedb/compute/sql/plan"
-	"gopkg.in/src-d/go-vitess.v1/vt/sqlparser"
+	"github.com/dolthub/vitess/go/vt/sqlparser"
 )
 
 // deferredColumn is a wrapper on UnresolvedColumn used only to defer the

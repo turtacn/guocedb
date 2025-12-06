@@ -2,7 +2,7 @@
 package transaction
 
 import (
-	"github.com/dolthub/go-mysql-server/sql"
+	"github.com/turtacn/guocedb/compute/sql"
 	"github.com/turtacn/guocedb/common/errors"
 	"github.com/turtacn/guocedb/interfaces"
 )

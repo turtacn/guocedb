@@ -7,7 +7,7 @@ import (
 	"github.com/turtacn/guocedb/compute/executor"
 	"github.com/turtacn/guocedb/compute/auth"
 
-	"gopkg.in/src-d/go-vitess.v1/mysql"
+	"github.com/dolthub/vitess/go/mysql"
 )
 
 // Server is a MySQL server for SQLe engines.
@@ -65,13 +65,17 @@ func NewServer(cfg Config, e *executor.Engine, sb SessionBuilder) (*Server, erro
 }
 
 // Start starts accepting connections on the server.
-func (s *Server) Start() error {
-	s.Listener.Accept()
-	return nil
+func (s *Server) Start() {
+	go s.Listener.Accept()
 }
 
 // Close closes the server connection.
 func (s *Server) Close() error {
 	s.Listener.Close()
 	return nil
+}
+
+// Addr returns the address the server is listening on.
+func (s *Server) Addr() string {
+	return s.Listener.Addr().String()
 }

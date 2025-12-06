@@ -2,16 +2,14 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
-	"time"
 
 	"github.com/spf13/cobra"
-	// This import would be the generated protobuf code
-	// mgmtv1 "github.com/turtacn/guocedb/api/protobuf/mgmt/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	// This import would be the generated protobuf code
+	// mgmtv1 "github.com/turtacn/guocedb/api/protobuf/mgmt/v1"
 )
 
 var (

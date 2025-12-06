@@ -20,6 +20,10 @@ var (
 	// current scope.
 	ErrTableNotFound = errors.NewKind("table not found: %s")
 
+	// ErrDatabaseExists is thrown when someone tries to create a
+	// database with a name of an existing one
+	ErrDatabaseExists = errors.NewKind("database with name %s already exists")
+
 	//ErrUnexpectedRowLength is thrown when the obtained row has more columns than the schema
 	ErrUnexpectedRowLength = errors.NewKind("expected %d values, got %d")
 )

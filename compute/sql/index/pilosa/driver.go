@@ -158,7 +158,7 @@ func (d *Driver) LoadAll(db, table string) ([]sql.Index, error) {
 		}
 	}
 	if len(errors) > 0 {
-		return nil, fmt.Errorf(strings.Join(errors, "\n"))
+		return nil, fmt.Errorf("%s", strings.Join(errors, "\n"))
 	}
 
 	return indexes, nil

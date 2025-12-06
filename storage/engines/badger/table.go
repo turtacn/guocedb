@@ -9,7 +9,7 @@ package badger
 
 // A full implementation would look something like this:
 /*
-import "github.com/dolthub/go-mysql-server/sql"
+import "github.com/turtacn/guocedb/compute/sql"
 
 type Table struct {
 	db   *Storage

@@ -86,6 +86,7 @@ func (c *PersistentCatalog) DropIndex(ctx *sql.Context, dbName, tableName, index
 type dummyDatabase struct{ name string }
 func newDummyDatabase(name string) sql.Database { return &dummyDatabase{name: name} }
 func (d *dummyDatabase) Name() string { return d.name }
+func (d *dummyDatabase) Tables() map[string]sql.Table { return make(map[string]sql.Table) }
 func (d *dummyDatabase) GetTableInsensitive(ctx *sql.Context, tblName string) (sql.Table, bool, error) { return nil, false, nil }
 func (d *dummyDatabase) GetTableNames(ctx *sql.Context) ([]string, error) { return nil, nil }
 

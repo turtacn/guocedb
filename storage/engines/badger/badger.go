@@ -6,7 +6,7 @@ import (
 	"os"
 
 	"github.com/dgraph-io/badger/v3"
-	"github.com/dolthub/go-mysql-server/sql"
+	"github.com/turtacn/guocedb/compute/sql"
 	"github.com/turtacn/guocedb/common/config"
 	"github.com/turtacn/guocedb/interfaces"
 )
@@ -109,7 +109,6 @@ func (s *Storage) DropDatabase(ctx *sql.Context, name string) error {
 }
 
 func (s *Storage) ListDatabases(ctx *sql.Context) ([]string, error) {
-	var dbs []string
 	// Implementation would scan for DB keys.
 	return []string{"information_schema", "mysql", "test"}, nil // Placeholder
 }
@@ -120,7 +119,7 @@ func (s *Storage) CreateTable(ctx *sql.Context, dbName string, table sql.Table) 
 		key := EncodeTableKey(dbName, table.Name())
 		_, err := txn.Get(key)
 		if err == nil {
-			return sql.ErrTableExists.New(table.Name())
+			return sql.ErrTableAlreadyExists.New(table.Name())
 		}
 		if err != badger.ErrKeyNotFound {
 			return err

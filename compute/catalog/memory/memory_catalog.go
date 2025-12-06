@@ -20,6 +20,11 @@ func (d *Database) Name() string {
 	return d.name
 }
 
+// Tables returns the tables in the database.
+func (d *Database) Tables() map[string]sql.Table {
+	return d.tables
+}
+
 // GetTableInsensitive retrieves a table by name, case-insensitive.
 func (d *Database) GetTableInsensitive(ctx *sql.Context, tblName string) (sql.Table, bool, error) {
 	// In-memory is case-sensitive for simplicity.
@@ -134,7 +139,7 @@ func (c *MemoryCatalog) CreateTable(ctx *sql.Context, dbName string, table sql.T
 		return sql.ErrDatabaseNotFound.New(dbName)
 	}
 	if _, ok := db.tables[table.Name()]; ok {
-		return sql.ErrTableExists.New(table.Name())
+		return sql.ErrTableAlreadyExists.New(table.Name())
 	}
 	db.tables[table.Name()] = table
 	return c.storage.CreateTable(ctx, dbName, table)

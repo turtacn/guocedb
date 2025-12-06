@@ -5,7 +5,7 @@ import (
 	"reflect"
 
 	errors "gopkg.in/src-d/go-errors.v1"
-	"gopkg.in/src-d/go-vitess.v1/vt/sqlparser"
+	"github.com/dolthub/vitess/go/vt/sqlparser"
 
 	"github.com/turtacn/guocedb/compute/sql"
 )

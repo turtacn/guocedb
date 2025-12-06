@@ -2,6 +2,7 @@
 package sal
 
 import (
+	"github.com/turtacn/guocedb/compute/sql"
 	"fmt"
 	"sync"
 

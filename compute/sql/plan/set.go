@@ -6,7 +6,7 @@ import (
 
 	"github.com/turtacn/guocedb/compute/sql"
 	"github.com/turtacn/guocedb/compute/sql/expression"
-	"gopkg.in/src-d/go-vitess.v1/vt/sqlparser"
+	"github.com/dolthub/vitess/go/vt/sqlparser"
 )
 
 // Set configuration variables. Right now, only session variables are supported.

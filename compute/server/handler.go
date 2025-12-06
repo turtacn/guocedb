@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"io"
 	"regexp"
 	"strconv"
@@ -14,9 +15,10 @@ import (
 	"github.com/turtacn/guocedb/compute/sql"
 
 	"github.com/sirupsen/logrus"
-	"gopkg.in/src-d/go-vitess.v1/mysql"
-	"gopkg.in/src-d/go-vitess.v1/sqltypes"
-	"gopkg.in/src-d/go-vitess.v1/vt/proto/query"
+	"github.com/dolthub/vitess/go/mysql"
+	"github.com/dolthub/vitess/go/sqltypes"
+	"github.com/dolthub/vitess/go/vt/proto/query"
+	"github.com/dolthub/vitess/go/vt/sqlparser"
 )
 
 var regKillCmd = regexp.MustCompile(`^kill (?:(query|connection) )?(\d+)$`)
@@ -71,11 +73,12 @@ func (h *Handler) ConnectionClosed(c *mysql.Conn) {
 
 // ComQuery executes a SQL query on the SQLe engine.
 func (h *Handler) ComQuery(
+	ctx context.Context,
 	c *mysql.Conn,
 	query string,
-	callback func(*sqltypes.Result) error,
+	callback mysql.ResultSpoolFn,
 ) (err error) {
-	ctx := h.sm.NewContextWithQuery(c, query)
+	sqlCtx := h.sm.NewContextWithQuery(c, query)
 
 	handled, err := h.handleKill(c, query)
 	if err != nil {
@@ -87,10 +90,10 @@ func (h *Handler) ComQuery(
 	}
 
 	start := time.Now()
-	schema, rows, err := h.e.Query(ctx, query)
+	schema, rows, err := h.e.Query(sqlCtx, query)
 	defer func() {
 		if q, ok := h.e.Auth.(*auth.Audit); ok {
-			q.Query(ctx, time.Since(start), err)
+			q.Query(sqlCtx, time.Since(start), err)
 		}
 	}()
 
@@ -106,7 +109,7 @@ func (h *Handler) ComQuery(
 		}
 
 		if r.RowsAffected == rowsBatch {
-			if err := callback(r); err != nil {
+			if err := callback(r, true); err != nil {
 				return err
 			}
 
@@ -141,7 +144,48 @@ func (h *Handler) ComQuery(
 		return nil
 	}
 
-	return callback(r)
+	return callback(r, false)
+}
+
+// ComInitDB changes the database for the current connection.
+func (h *Handler) ComInitDB(c *mysql.Conn, schemaName string) error {
+	return h.sm.SetDB(c, schemaName)
+}
+
+// ComMultiQuery executes multiple SQL queries on the SQLe engine.
+func (h *Handler) ComMultiQuery(
+	ctx context.Context,
+	c *mysql.Conn,
+	query string,
+	callback mysql.ResultSpoolFn,
+) (string, error) {
+	// For now, treat MultiQuery the same as Query and assume only one statement for now or return empty string
+	err := h.ComQuery(ctx, c, query, callback)
+	return "", err
+}
+
+func (h *Handler) ComPrepare(ctx context.Context, c *mysql.Conn, query string, prepare *mysql.PrepareData) ([]*query.Field, error) {
+	// Not implemented
+	return nil, nil
+}
+
+func (h *Handler) ComStmtExecute(ctx context.Context, c *mysql.Conn, prepare *mysql.PrepareData, callback func(*sqltypes.Result) error) error {
+	// Not implemented
+	return nil
+}
+
+func (h *Handler) ConnectionAborted(c *mysql.Conn, reason string) error {
+	logrus.Infof("ConnectionAborted: client %v, reason: %s", c.ConnectionID, reason)
+	return nil
+}
+
+func (h *Handler) ComResetConnection(c *mysql.Conn) error {
+	// Not implemented
+	return nil
+}
+
+func (h *Handler) ParserOptionsForConnection(c *mysql.Conn) (sqlparser.ParserOptions, error) {
+	return sqlparser.ParserOptions{}, nil
 }
 
 // WarningCount is called at the end of each query to obtain

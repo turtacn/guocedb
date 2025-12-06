@@ -3,7 +3,6 @@ package badger
 
 import (
 	"github.com/dgraph-io/badger/v3"
-	"github.com/turtacn/guocedb/interfaces"
 )
 
 // Iterator is a wrapper around a badger.Iterator that implements the interfaces.Iterator.

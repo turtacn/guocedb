@@ -49,6 +49,8 @@ type Session interface {
 	ClearWarnings()
 	// WarningCount returns a number of session warnings
 	WarningCount() uint16
+	// SetCurrentDatabase sets the current database.
+	SetCurrentDatabase(db string)
 }
 
 // BaseSession is the basic session type.
@@ -56,6 +58,7 @@ type BaseSession struct {
 	id       uint32
 	addr     string
 	client   Client
+	currentDB string
 	mu       sync.RWMutex
 	config   map[string]TypedValue
 	warnings []*Warning
@@ -137,6 +140,13 @@ func (s *BaseSession) WarningCount() uint16 {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return uint16(len(s.warnings))
+}
+
+// SetCurrentDatabase sets the current database.
+func (s *BaseSession) SetCurrentDatabase(db string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.currentDB = db
 }
 
 type (

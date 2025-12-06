@@ -1,5 +1,6 @@
 // Package unit contains unit tests for the guocedb project.
 package unit
+import "os"
 
 import (
 	"testing"

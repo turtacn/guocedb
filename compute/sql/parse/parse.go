@@ -15,7 +15,7 @@ import (
 	"github.com/turtacn/guocedb/compute/sql/expression"
 	"github.com/turtacn/guocedb/compute/sql/expression/function"
 	"github.com/turtacn/guocedb/compute/sql/plan"
-	"gopkg.in/src-d/go-vitess.v1/vt/sqlparser"
+	"github.com/dolthub/vitess/go/vt/sqlparser"
 )
 
 var (
@@ -139,7 +139,16 @@ func convert(ctx *sql.Context, stmt sqlparser.Statement, query string) (sql.Node
 		return convertSet(ctx, n)
 	case *sqlparser.Use:
 		return convertUse(n)
+	case *sqlparser.SetOp: // Replaces Union
+		return convertSetOp(ctx, n)
 	}
+}
+
+func convertSetOp(ctx *sql.Context, n *sqlparser.SetOp) (sql.Node, error) {
+	if n.Type != sqlparser.UnionStr {
+		return nil, ErrUnsupportedFeature.New(n.Type)
+	}
+	return nil, ErrUnsupportedFeature.New("UNION")
 }
 
 func convertUse(n *sqlparser.Use) (sql.Node, error) {
@@ -148,18 +157,28 @@ func convertUse(n *sqlparser.Use) (sql.Node, error) {
 }
 
 func convertSet(ctx *sql.Context, n *sqlparser.Set) (sql.Node, error) {
-	if n.Scope == sqlparser.GlobalStr {
-		return nil, ErrUnsupportedFeature.New("SET global variables")
-	}
-
 	var variables = make([]plan.SetVariable, len(n.Exprs))
 	for i, e := range n.Exprs {
+		// e is *sqlparser.SetVarExpr
+		if e.Scope == sqlparser.SetScope_Global {
+			return nil, ErrUnsupportedFeature.New("SET global variables")
+		}
+
 		expr, err := exprToExpression(e.Expr)
 		if err != nil {
 			return nil, err
 		}
 
-		name := strings.TrimSpace(e.Name.Lowered())
+		// Use strings.ToLower(e.Name.String())
+		name := strings.TrimSpace(strings.ToLower(e.Name.String()))
+
+		switch e.Scope {
+		case sqlparser.SetScope_Global:
+			name = "@@global." + name
+		case sqlparser.SetScope_Session:
+			name = "@@session." + name
+		}
+
 		if expr, err = expr.TransformUp(func(e sql.Expression) (sql.Expression, error) {
 			if _, ok := e.(*expression.DefaultColumn); ok {
 				return e, nil
@@ -205,15 +224,17 @@ func convertSet(ctx *sql.Context, n *sqlparser.Set) (sql.Node, error) {
 }
 
 func convertShow(s *sqlparser.Show, query string) (sql.Node, error) {
-	switch s.Type {
-	case sqlparser.KeywordString(sqlparser.TABLES):
+	showType := strings.ToUpper(s.Type)
+	switch showType {
+	case "TABLES":
 		return plan.NewShowTables(sql.UnresolvedDatabase("")), nil
-	case sqlparser.KeywordString(sqlparser.DATABASES):
+	case "DATABASES":
 		return plan.NewShowDatabases(), nil
-	case sqlparser.KeywordString(sqlparser.FIELDS), sqlparser.KeywordString(sqlparser.COLUMNS):
-		// TODO(erizocosmico): vitess parser does not support EXTENDED.
-		table := plan.NewUnresolvedTable(s.OnTable.Name.String(), s.OnTable.Qualifier.String())
-		full := s.ShowTablesOpt.Full != ""
+	case "FIELDS", "COLUMNS":
+		// s.Table (not s.OnTable)
+		table := plan.NewUnresolvedTable(s.Table.Name.String(), s.Table.DbQualifier.String())
+		// s.Full (boolean on struct)
+		full := s.Full
 
 		var node sql.Node = plan.NewShowColumns(full, table)
 
@@ -241,7 +262,7 @@ func convertShow(s *sqlparser.Show, query string) (sql.Node, error) {
 		}
 
 		return node, nil
-	case sqlparser.KeywordString(sqlparser.TABLE):
+	case "TABLE STATUS":
 		return parseShowTableStatus(query)
 	default:
 		unsupportedShow := fmt.Sprintf("SHOW %s", s.Type)
@@ -250,9 +271,16 @@ func convertShow(s *sqlparser.Show, query string) (sql.Node, error) {
 }
 
 func convertSelect(ctx *sql.Context, s *sqlparser.Select) (sql.Node, error) {
-	node, err := tableExprsToTable(ctx, s.From)
-	if err != nil {
-		return nil, err
+	var node sql.Node
+	var err error
+	if len(s.From) == 0 {
+		// No FROM clause, implied FROM DUAL. Use "dual" table name to match legacy tests.
+		node = plan.NewUnresolvedTable("dual", "")
+	} else {
+		node, err = tableExprsToTable(ctx, s.From)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if s.Having != nil {
@@ -271,7 +299,8 @@ func convertSelect(ctx *sql.Context, s *sqlparser.Select) (sql.Node, error) {
 		return nil, err
 	}
 
-	if s.Distinct != "" {
+	// Distinct is in QueryOpts
+	if s.QueryOpts.Distinct {
 		node = plan.NewDistinct(node)
 	}
 
@@ -335,8 +364,9 @@ func convertInsert(ctx *sql.Context, i *sqlparser.Insert) (sql.Node, error) {
 		return nil, err
 	}
 
+	// Qualifier -> DbQualifier
 	return plan.NewInsertInto(
-		plan.NewUnresolvedTable(i.Table.Name.String(), i.Table.Qualifier.String()),
+		plan.NewUnresolvedTable(i.Table.Name.String(), i.Table.DbQualifier.String()),
 		src,
 		columnsToStrings(i.Columns),
 	), nil
@@ -376,10 +406,12 @@ func insertRowsToNode(ctx *sql.Context, ir sqlparser.InsertRows) (sql.Node, erro
 	switch v := ir.(type) {
 	case *sqlparser.Select:
 		return convertSelect(ctx, v)
-	case *sqlparser.Union:
+	case *sqlparser.SetOp: // Replaces Union
 		return nil, ErrUnsupportedFeature.New("UNION")
 	case sqlparser.Values:
 		return valuesToValues(v)
+	case *sqlparser.AliasedValues:
+		return valuesToValues(v.Values)
 	default:
 		return nil, ErrUnsupportedSyntax.New(ir)
 	}
@@ -444,7 +476,7 @@ func tableExprToTable(
 		// TODO: Add support for qualifier.
 		switch e := t.Expr.(type) {
 		case sqlparser.TableName:
-			node := plan.NewUnresolvedTable(e.Name.String(), e.Qualifier.String())
+			node := plan.NewUnresolvedTable(e.Name.String(), e.DbQualifier.String())
 			if !t.As.IsEmpty() {
 				return plan.NewTableAlias(t.As.String(), node), nil
 			}
@@ -709,7 +741,8 @@ func exprToExpression(e sqlparser.Expr) (sql.Expression, error) {
 			return nil, err
 		}
 
-		return expression.NewUnresolvedFunction(v.Name.Lowered(),
+		// Use strings.ToLower(v.Name.String())
+		return expression.NewUnresolvedFunction(strings.ToLower(v.Name.String()),
 			v.IsAggregate(), exprs...), nil
 	case *sqlparser.ParenExpr:
 		return exprToExpression(v.Expr)
@@ -743,7 +776,7 @@ func exprToExpression(e sqlparser.Expr) (sql.Expression, error) {
 			return nil, err
 		}
 
-		return expression.NewConvert(expr, v.Type.Type), nil
+		return expression.NewConvert(expr, strings.ToLower(v.Type.Type)), nil
 	case *sqlparser.RangeCond:
 		val, err := exprToExpression(v.Left)
 		if err != nil {
@@ -924,7 +957,7 @@ func selectExprToExpression(se sqlparser.SelectExpr) (sql.Expression, error) {
 		}
 
 		// TODO: Handle case-sensitiveness when needed.
-		return expression.NewAlias(expr, e.As.Lowered()), nil
+		return expression.NewAlias(expr, strings.ToLower(e.As.String())), nil
 	}
 }
 

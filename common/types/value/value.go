@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/dolthub/go-mysql-server/sql"
+	"github.com/turtacn/guocedb/compute/sql"
 )
 
 // Value is the interface that all value types must implement.
@@ -132,7 +132,7 @@ type String struct {
 
 // Type returns the VARCHAR SQL type.
 func (s *String) Type() sql.Type {
-	return sql.LongText
+	return sql.Text
 }
 
 // ToString returns the string itself.

@@ -10,13 +10,15 @@ import (
 	"github.com/turtacn/guocedb/common/config"
 	"github.com/turtacn/guocedb/common/log"
 	"github.com/turtacn/guocedb/compute/analyzer"
-	"github.com/turtacn/guocedb/compute/catalog/memory"
+	"github.com/turtacn/guocedb/compute/sql"
 	"github.com/turtacn/guocedb/compute/executor"
 	"github.com/turtacn/guocedb/compute/optimizer"
 	"github.com/turtacn/guocedb/maintenance/metrics"
 	"github.com/turtacn/guocedb/network/server"
-	"github.com/turtacn/guocedb/protocol/mysql"
+	"github.com/turtacn/guocedb/compute/auth"
+	mysql "github.com/turtacn/guocedb/compute/server"
 	"github.com/turtacn/guocedb/storage/sal"
+	"fmt"
 )
 
 func main() {
@@ -44,13 +46,22 @@ func main() {
 	}
 
 	// Compute Layer
-	catalog := memory.NewMemoryCatalog(storage)
+	catalog := sql.NewCatalog()
 	analyzer := analyzer.NewAnalyzer(catalog)
 	optimizer := optimizer.NewOptimizer()
-	engine := executor.NewEngine(analyzer, optimizer)
+	engine := executor.NewEngine(analyzer, optimizer, catalog)
 
 	// Protocol Layer
-	mysqlServer, err := mysql.NewServer(cfg, engine)
+	// Use auth.None for now or load from config/file
+	authMethod := auth.NewNone()
+
+	serverConfig := mysql.Config{
+		Protocol: "tcp",
+		Address:  fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
+		Auth:     authMethod,
+	}
+
+	mysqlServer, err := mysql.NewDefaultServer(serverConfig, engine)
 	if err != nil {
 		logger.Fatalf("Failed to initialize MySQL server: %v", err)
 	}

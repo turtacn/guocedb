@@ -170,7 +170,7 @@ func (a *Analyzer) Analyze(ctx *sql.Context, n sql.Node) (sql.Node, error) {
 	for _, batch := range a.Batches {
 		prev, err = batch.Eval(ctx, a, prev)
 		if ErrMaxAnalysisIters.Is(err) {
-			a.Log(err.Error())
+			a.Log("%s", err.Error())
 			continue
 		}
 		if err != nil {

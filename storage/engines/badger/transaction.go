@@ -45,7 +45,7 @@ func (t *Transaction) Get(key []byte) ([]byte, error) {
 // Set stores a key-value pair.
 func (t *Transaction) Set(key, value []byte) error {
 	if t.readOnly {
-		return badger.ErrUpdateInReadOnlyTxn
+		return badger.ErrReadOnlyTxn
 	}
 	return t.txn.Set(key, value)
 }
@@ -53,7 +53,7 @@ func (t *Transaction) Set(key, value []byte) error {
 // Delete removes a key.
 func (t *Transaction) Delete(key []byte) error {
 	if t.readOnly {
-		return badger.ErrUpdateInReadOnlyTxn
+		return badger.ErrReadOnlyTxn
 	}
 	return t.txn.Delete(key)
 }
