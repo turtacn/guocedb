@@ -26,6 +26,9 @@ var (
 
 	//ErrUnexpectedRowLength is thrown when the obtained row has more columns than the schema
 	ErrUnexpectedRowLength = errors.NewKind("expected %d values, got %d")
+
+	// ErrInvalidChildrenNumber is returned when a node is given an invalid number of children
+	ErrInvalidChildrenNumber = errors.NewKind("invalid children number for node %T: %d (expected %d)")
 )
 
 // Nameable is something that has a name.

@@ -145,10 +145,56 @@ func convert(ctx *sql.Context, stmt sqlparser.Statement, query string) (sql.Node
 }
 
 func convertSetOp(ctx *sql.Context, n *sqlparser.SetOp) (sql.Node, error) {
-	if n.Type != sqlparser.UnionStr {
-		return nil, ErrUnsupportedFeature.New(n.Type)
+	left, err := convert(ctx, n.Left, "")
+	if err != nil {
+		return nil, err
 	}
-	return nil, ErrUnsupportedFeature.New("UNION")
+
+	right, err := convert(ctx, n.Right, "")
+	if err != nil {
+		return nil, err
+	}
+
+	var node sql.Node
+	switch n.Type {
+	case sqlparser.UnionStr:
+		node = plan.NewUnion(left, right, true)
+	case "union all":
+		node = plan.NewUnion(left, right, false)
+	case sqlparser.IntersectStr:
+		node = plan.NewIntersect(left, right, true)
+	case "intersect all":
+		node = plan.NewIntersect(left, right, false)
+	case sqlparser.ExceptStr:
+		node = plan.NewExcept(left, right, true)
+	case "except all":
+		node = plan.NewExcept(left, right, false)
+	default:
+		return nil, ErrUnsupportedSyntax.New(n.Type)
+	}
+
+	if len(n.OrderBy) != 0 {
+		node, err = orderByToSort(n.OrderBy, node)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if n.Limit != nil {
+		node, err = limitToLimit(ctx, n.Limit.Rowcount, node)
+		if err != nil {
+			return nil, err
+		}
+
+		if n.Limit.Offset != nil {
+			node, err = offsetToOffset(ctx, n.Limit.Offset, node)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	return node, nil
 }
 
 func convertUse(n *sqlparser.Use) (sql.Node, error) {
@@ -407,7 +453,7 @@ func insertRowsToNode(ctx *sql.Context, ir sqlparser.InsertRows) (sql.Node, erro
 	case *sqlparser.Select:
 		return convertSelect(ctx, v)
 	case *sqlparser.SetOp: // Replaces Union
-		return nil, ErrUnsupportedFeature.New("UNION")
+		return convertSetOp(ctx, v)
 	case sqlparser.Values:
 		return valuesToValues(v)
 	case *sqlparser.AliasedValues:
