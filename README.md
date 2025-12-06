@@ -273,6 +273,7 @@ For a detailed explanation of the type system's design, refer to the [Type Syste
 * [x] Basic MySQL protocol compatibility
 * [x] BadgerDB storage engine integration
 * [x] Core SQL operations (CRUD)
+* [x] Set Operations (UNION, INTERSECT, EXCEPT)
 * [x] Transaction support
 * [x] CLI tools
 
