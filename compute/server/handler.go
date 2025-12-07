@@ -30,18 +30,21 @@ const rowsBatch = 100
 
 // Handler is a connection handler for a SQLe engine.
 type Handler struct {
-	mu sync.Mutex
-	e  *executor.Engine
-	sm *SessionManager
-	c  map[uint32]*mysql.Conn
+	mu              sync.Mutex
+	e               *executor.Engine
+	sm              *SessionManager
+	sessionMgr      *EnhancedSessionManager // New session manager for enhanced functionality
+	c               map[uint32]*mysql.Conn
+	disableMultiStmts bool
 }
 
 // NewHandler creates a new Handler given a SQLe engine.
 func NewHandler(e *executor.Engine, sm *SessionManager) *Handler {
 	return &Handler{
-		e:  e,
-		sm: sm,
-		c:  make(map[uint32]*mysql.Conn),
+		e:          e,
+		sm:         sm,
+		sessionMgr: NewEnhancedSessionManager(),
+		c:          make(map[uint32]*mysql.Conn),
 	}
 }
 
@@ -53,12 +56,31 @@ func (h *Handler) NewConnection(c *mysql.Conn) {
 	}
 	h.mu.Unlock()
 
-	logrus.Infof("NewConnection: client %v", c.ConnectionID)
+	// Create a new session for this connection
+	user := c.User
+	client := "unknown"
+	// Try to get remote address safely
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				// If RemoteAddr() panics, just use "unknown"
+				client = "unknown"
+			}
+		}()
+		if addr := c.RemoteAddr(); addr != nil {
+			client = addr.String()
+		}
+	}()
+	sess := h.sessionMgr.NewSession(user, client)
+	c.ConnectionID = sess.ID()
+
+	logrus.Infof("NewConnection: client %v, user %s", c.ConnectionID, user)
 }
 
 // ConnectionClosed reports that a connection has been closed.
 func (h *Handler) ConnectionClosed(c *mysql.Conn) {
 	h.sm.CloseConn(c)
+	h.sessionMgr.RemoveSession(c.ConnectionID)
 
 	h.mu.Lock()
 	delete(h.c, c.ConnectionID)
@@ -78,7 +100,16 @@ func (h *Handler) ComQuery(
 	query string,
 	callback mysql.ResultSpoolFn,
 ) (err error) {
-	sqlCtx := h.sm.NewContextWithQuery(c, query)
+	// Get the session and create context with current database
+	sess := h.sessionMgr.GetSession(c.ConnectionID)
+	var sqlCtx *sql.Context
+	if sess != nil {
+		sqlCtx = sess.Context(ctx)
+		sqlCtx = sql.NewContext(ctx, sql.WithSession(sqlCtx.Session), sql.WithQuery(query))
+	} else {
+		// Fall back to old session manager
+		sqlCtx = h.sm.NewContextWithQuery(c, query)
+	}
 
 	handled, err := h.handleKill(c, query)
 	if err != nil {
@@ -149,7 +180,38 @@ func (h *Handler) ComQuery(
 
 // ComInitDB changes the database for the current connection.
 func (h *Handler) ComInitDB(c *mysql.Conn, schemaName string) error {
-	return h.sm.SetDB(c, schemaName)
+	// Get the session for this connection
+	sess := h.sessionMgr.GetSession(c.ConnectionID)
+	if sess == nil {
+		return mysql.NewSQLError(mysql.ERUnknownComError, mysql.SSUnknownSQLState, "session not found")
+	}
+
+	// Check if the database exists
+	_, err := h.e.Catalog.Database(schemaName)
+	if err != nil {
+		// Check if it's a "database not found" error
+		if sql.ErrDatabaseNotFound.Is(err) {
+			return mysql.NewSQLError(mysql.ERBadDb, mysql.SSClientError, "Unknown database '%s'", schemaName)
+		}
+		// Other errors
+		return mysql.NewSQLError(mysql.ERUnknownComError, mysql.SSUnknownSQLState, "Error accessing database: %s", err.Error())
+	}
+
+	// Set the current database in the session
+	sess.SetCurrentDB(schemaName)
+	
+	// Also set it in the old session manager for compatibility
+	// But handle potential panics from RemoteAddr()
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				// If SetDB panics, just ignore it
+			}
+		}()
+		h.sm.SetDB(c, schemaName)
+	}()
+	
+	return nil
 }
 
 // ComMultiQuery executes multiple SQL queries on the SQLe engine.
@@ -159,9 +221,32 @@ func (h *Handler) ComMultiQuery(
 	query string,
 	callback mysql.ResultSpoolFn,
 ) (string, error) {
-	// For now, treat MultiQuery the same as Query and assume only one statement for now or return empty string
-	err := h.ComQuery(ctx, c, query, callback)
-	return "", err
+	if h.disableMultiStmts {
+		// Fall back to single query
+		err := h.ComQuery(ctx, c, query, callback)
+		return "", err
+	}
+
+	// Split the query into individual statements
+	statements := h.splitStatements(query)
+	if len(statements) == 0 {
+		return "", nil
+	}
+
+	// Execute the first statement
+	firstStmt := statements[0]
+	err := h.ComQuery(ctx, c, firstStmt, callback)
+	if err != nil {
+		return "", err
+	}
+
+	// Return the remainder of the query (all statements after the first)
+	if len(statements) > 1 {
+		remainder := strings.Join(statements[1:], ";")
+		return remainder, nil
+	}
+
+	return "", nil
 }
 
 func (h *Handler) ComPrepare(ctx context.Context, c *mysql.Conn, query string, prepare *mysql.PrepareData) ([]*query.Field, error) {
@@ -260,4 +345,36 @@ func schemaToFields(s sql.Schema) []*query.Field {
 	}
 
 	return fields
+}
+
+// splitStatements splits a multi-statement query into individual statements
+func (h *Handler) splitStatements(query string) []string {
+	// Use vitess sqlparser to split statements properly
+	statements, err := sqlparser.SplitStatementToPieces(query)
+	if err != nil {
+		// Fall back to simple semicolon splitting if parsing fails
+		return h.simpleSplitStatements(query)
+	}
+
+	result := make([]string, 0)
+	for _, stmt := range statements {
+		trimmed := strings.TrimSpace(stmt)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
+}
+
+// simpleSplitStatements provides a fallback for simple semicolon splitting
+func (h *Handler) simpleSplitStatements(query string) []string {
+	parts := strings.Split(query, ";")
+	result := make([]string, 0)
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
 }
