@@ -6,6 +6,7 @@ require (
 	github.com/boltdb/bolt v1.3.1
 	github.com/dgraph-io/badger/v3 v3.2103.5
 	github.com/dolthub/vitess v2.1.1+incompatible
+	github.com/dustin/go-humanize v1.0.1
 	github.com/go-sql-driver/mysql v1.7.2-0.20231213112541-0004702b931d
 	github.com/google/uuid v1.6.0
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.15.2
@@ -35,7 +36,6 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dgraph-io/ristretto v0.1.1 // indirect
-	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect

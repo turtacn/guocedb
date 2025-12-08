@@ -58,24 +58,44 @@ To provide developers with a simple, scalable, and MySQL-compatible database sol
 
 ### Installation
 
-```bash
-# Install guocedb server
-go install github.com/turtacn/guocedb/cmd/guocedb-server@latest
+#### From Source
 
-# Install guocedb CLI
-go install github.com/turtacn/guocedb/cmd/guocedb-cli@latest
-````
+```bash
+# Clone the repository
+git clone https://github.com/turtacn/guocedb.git
+cd guocedb
+
+# Build both CLI and server
+make build
+
+# Or build individually
+make build-cli     # Creates bin/guocedb
+make build-server  # Creates bin/guocedb-server
+```
+
+#### From Go Install
+
+```bash
+# Install guocedb CLI (includes server functionality)
+go install github.com/turtacn/guocedb/cli@latest
+
+# Install legacy server binary
+go install github.com/turtacn/guocedb/cmd/guocedb-server@latest
+```
 
 ### Quick Start
 
 1. **Start the database server**:
 
 ```bash
-# Start with default configuration
-guocedb-server --config configs/config.yaml.example
+# Using the new unified CLI
+guocedb serve
 
-# Or with minimal setup
-guocedb-server --data-dir ./data --port 3306
+# With custom configuration
+guocedb serve --config configs/guocedb.yaml.example
+
+# With command line options
+guocedb serve --host 0.0.0.0 --port 3306 --data-dir ./data
 ```
 
 2. **Connect using MySQL client**:
@@ -108,20 +128,29 @@ INSERT INTO users (name, email) VALUES
 SELECT * FROM users WHERE name LIKE 'A%';
 ```
 
-4. **Management with guocedb-cli**:
+4. **Management with guocedb CLI**:
 
 ```bash
-# Check database status
-guocedb-cli status
+# Check server status
+guocedb status
 
-# Show storage engine info
-guocedb-cli storage info
+# Check status with JSON output
+guocedb status --format json
 
-# Backup database
-guocedb-cli backup --database myapp --output myapp_backup.sql
+# Export database
+guocedb export --database myapp > backup.sql
 
-# Monitor performance
-guocedb-cli metrics --follow
+# Export only schema
+guocedb export --database myapp --schema-only > schema.sql
+
+# Export specific tables
+guocedb export --database myapp --tables users,orders > partial.sql
+
+# Collect diagnostic information
+guocedb diagnostic > diagnostic.json
+
+# Show version information
+guocedb version
 ```
 
 ### Docker Usage
@@ -138,32 +167,183 @@ docker run -d \
 mysql -h localhost -P 3306 -u root
 ```
 
-### Configuration Example
+## CLI Usage Guide
+
+### Server Management
+
+```bash
+# Start server with default settings
+guocedb serve
+
+# Start with custom configuration file
+guocedb serve --config /etc/guocedb/guocedb.yaml
+
+# Start with command line overrides
+guocedb serve --host 0.0.0.0 --port 3307 --data-dir /var/lib/guocedb
+
+# Start with verbose logging
+guocedb serve --verbose
+```
+
+### Status Monitoring
+
+```bash
+# Show server status (table format)
+guocedb status
+
+# Show status in JSON format
+guocedb status --format json
+
+# Show status in text format (for scripting)
+guocedb status --format text
+
+# Check status of remote server
+guocedb status --addr 192.168.1.100:3306
+```
+
+### Data Export
+
+```bash
+# Export entire database
+guocedb export --database myapp > backup.sql
+
+# Export to file
+guocedb export --database myapp --output backup.sql
+
+# Export only schema (no data)
+guocedb export --database myapp --schema-only --output schema.sql
+
+# Export only data (no schema)
+guocedb export --database myapp --data-only --output data.sql
+
+# Export specific tables
+guocedb export --database myapp --tables users,orders,products
+
+# Export from remote server
+guocedb export --addr 192.168.1.100:3306 --database myapp
+```
+
+### Diagnostics
+
+```bash
+# Collect diagnostic information
+guocedb diagnostic
+
+# Save diagnostics to file
+guocedb diagnostic --output diagnostic.json
+
+# Include configuration in diagnostics
+guocedb diagnostic --include-config
+
+# Include recent logs (if available)
+guocedb diagnostic --include-logs
+```
+
+### Version Information
+
+```bash
+# Show full version information
+guocedb version
+
+# Show only version number
+guocedb version --short
+```
+
+### Configuration
+
+GuoceDB supports configuration through:
+
+1. **Configuration files** (YAML format)
+2. **Environment variables** (prefixed with `GUOCEDB_`)
+3. **Command line flags** (highest priority)
+
+#### Configuration File Example
 
 ```yaml
 server:
   host: "0.0.0.0"
   port: 3306
+  read_timeout: "30s"
+  write_timeout: "30s"
   max_connections: 1000
 
 storage:
-  engine: "badger"
   data_dir: "./data"
+  wal_dir: ""
+  sync_writes: true
   badger:
-    sync_writes: true
-    compression: true
+    value_log_file_size: 1073741824  # 1GB
+    num_memtables: 5
+    num_compactors: 4
 
-security:
-  auth_enabled: true
-  tls_enabled: false
-  
-logging:
+log:
   level: "info"
-  format: "json"
-  
-metrics:
-  enabled: true
-  port: 8080
+  format: "text"
+  output: "stderr"
+  add_source: false
+
+auth:
+  enabled: false
+  users:
+    - username: "root"
+      password: ""
+      databases: ["*"]
+
+performance:
+  query_cache_size: 0
+  sort_buffer_size: 262144
+  join_buffer_size: 262144
+
+monitoring:
+  enabled: false
+  port: 9090
+  path: "/metrics"
+```
+
+#### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `GUOCEDB_HOST` | Server listen host | `0.0.0.0` |
+| `GUOCEDB_PORT` | Server listen port | `3306` |
+| `GUOCEDB_DATA_DIR` | Data directory path | `./data` |
+| `GUOCEDB_LOG_LEVEL` | Log level (debug/info/warn/error) | `info` |
+| `GUOCEDB_LOG_FORMAT` | Log format (text/json) | `text` |
+| `GUOCEDB_READ_TIMEOUT` | Read timeout duration | `30s` |
+| `GUOCEDB_WRITE_TIMEOUT` | Write timeout duration | `30s` |
+| `GUOCEDB_MAX_CONNECTIONS` | Maximum connections | `1000` |
+
+#### Command Line Flags
+
+All configuration options can be overridden using command line flags:
+
+```bash
+# Global flags (available for all commands)
+--config, -c    Configuration file path
+--verbose, -v   Enable verbose output
+
+# Serve command flags
+--host          Listen host address
+--port          Listen port number
+--data-dir      Data directory path
+
+# Status command flags
+--format        Output format (table/json/text)
+--addr          Server address to check
+
+# Export command flags
+--database      Database name to export (required)
+--tables        Specific tables to export
+--output, -o    Output file path
+--schema-only   Export schema only
+--data-only     Export data only
+--addr          Server address
+
+# Diagnostic command flags
+--output, -o        Output file path
+--include-config    Include configuration
+--include-logs      Include recent logs
+--addr              Server address
 ```
 
 ## Performance Benchmarks

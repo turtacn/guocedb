@@ -1,0 +1,70 @@
+# GuoceDB Configuration File
+# Copy to guocedb.yaml and modify as needed
+
+server:
+  # Listen address
+  host: "0.0.0.0"
+  # Listen port (MySQL protocol)
+  port: 3306
+  # Read timeout
+  read_timeout: "30s"
+  # Write timeout
+  write_timeout: "30s"
+  # Maximum concurrent connections
+  max_connections: 1000
+
+storage:
+  # Data directory for persistent storage
+  data_dir: "./data"
+  # Separate WAL directory (optional, defaults to data_dir/wal)
+  wal_dir: ""
+  # Sync writes to disk (safer but slower)
+  sync_writes: true
+  # Badger options
+  badger:
+    # Value log file size
+    value_log_file_size: 1073741824  # 1GB
+    # Number of memtables
+    num_memtables: 5
+    # Number of compactors
+    num_compactors: 4
+
+log:
+  # Log level: debug, info, warn, error
+  level: "info"
+  # Log format: text, json
+  format: "text"
+  # Log output: stderr, stdout, or file path
+  output: "stderr"
+  # Include source file in log
+  add_source: false
+
+auth:
+  # Enable authentication
+  enabled: false
+  # User definitions
+  users:
+    - username: "root"
+      password: ""  # Empty for no password
+      databases: ["*"]  # * means all databases
+    - username: "app"
+      password: "secret"
+      databases: ["myapp"]
+
+# Performance tuning
+performance:
+  # Query cache size (0 to disable)
+  query_cache_size: 0
+  # Sort buffer size
+  sort_buffer_size: 262144  # 256KB
+  # Join buffer size
+  join_buffer_size: 262144  # 256KB
+
+# Monitoring (optional)
+monitoring:
+  # Enable metrics endpoint
+  enabled: false
+  # Metrics HTTP port
+  port: 9090
+  # Metrics path
+  path: "/metrics"
