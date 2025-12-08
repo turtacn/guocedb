@@ -43,7 +43,7 @@ func (i *Intersect) RowIter(ctx *sql.Context) (sql.RowIter, error) {
 		right:    right,
 		distinct: i.Distinct,
 		seenLeft: make(map[uint64]bool),
-		inRight:  nil, // initialized on first call
+		rightCounts: nil, // initialized on first call
 		ctx:      ctx,
 	}, nil
 }
@@ -100,13 +100,13 @@ func (i *Intersect) String() string {
 type intersectIter struct {
 	left, right sql.RowIter
 	distinct    bool
-	seenLeft    map[uint64]bool // To handle distinct on left side output
-	inRight     map[uint64]bool // Rows present in right side
+	seenLeft    map[uint64]bool
+	rightCounts map[uint64]int
 	ctx         *sql.Context
 }
 
 func (i *intersectIter) Next() (sql.Row, error) {
-	if i.inRight == nil {
+	if i.rightCounts == nil {
 		if err := i.loadRight(); err != nil {
 			return nil, err
 		}
@@ -123,25 +123,27 @@ func (i *intersectIter) Next() (sql.Row, error) {
 			return nil, err
 		}
 
-		// Row must be in right side
-		if !i.inRight[hash] {
+		count := i.rightCounts[hash]
+		if count <= 0 {
 			continue
 		}
 
-		// If distinct, check if we already emitted this row
 		if i.distinct {
 			if i.seenLeft[hash] {
 				continue
 			}
 			i.seenLeft[hash] = true
+			return row, nil
 		}
 
+		// For Intersect All, we decrement the count
+		i.rightCounts[hash]--
 		return row, nil
 	}
 }
 
 func (i *intersectIter) loadRight() error {
-	i.inRight = make(map[uint64]bool)
+	i.rightCounts = make(map[uint64]int)
 	for {
 		row, err := i.right.Next()
 		if err == io.EOF {
@@ -155,14 +157,11 @@ func (i *intersectIter) loadRight() error {
 		if err != nil {
 			return err
 		}
-		i.inRight[hash] = true
+		i.rightCounts[hash]++
 	}
 	return i.right.Close()
 }
 
 func (i *intersectIter) Close() error {
-	// right is already closed in loadRight, but calling it again is fine usually,
-	// or we check. Assuming idempotent close or careful.
-	// Actually loadRight closes right.
 	return i.left.Close()
 }

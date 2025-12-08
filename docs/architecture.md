@@ -44,6 +44,7 @@ GuoceDB 的架构设计遵循分层思想，主要包括接口层、计算层、
 
 -   **SQL 解析器 (Parser)**:
     -   接收 SQL 文本，利用 `go-mysql-server` 的解析器将其转换为抽象语法树 (AST)。
+    -   **Set Operations**: 支持 UNION, INTERSECT, EXCEPT 集合操作及其 ALL/DISTINCT 变体。
 -   **查询分析器 (Analyzer)**:
     -   对 AST 进行语义分析，包括验证表名、列名、数据类型等，并结合元数据目录进行解析。
     -   同样基于 `go-mysql-server` 的分析逻辑。
@@ -52,6 +53,7 @@ GuoceDB 的架构设计遵循分层思想，主要包括接口层、计算层、
     -   借鉴并扩展 `go-mysql-server` 的优化规则。
 -   **执行计划 (Plan)**:
     -   定义了查询的各个执行步骤和操作符。
+    -   包含 SetOp 节点 (Union, Intersect, Except) 实现。
 -   **查询执行引擎 (Executor)**:
     -   根据物理执行计划，实际执行查询操作，与事务管理器和存储层交互以获取或修改数据。
     -   初期可以依赖 `go-mysql-server` 的执行器，未来可以探索向量化执行引擎以提升分析查询 (AP) 性能。
