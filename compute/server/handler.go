@@ -13,6 +13,7 @@ import (
 	"github.com/turtacn/guocedb/compute/executor"
 	"github.com/turtacn/guocedb/compute/auth"
 	"github.com/turtacn/guocedb/compute/sql"
+	"github.com/turtacn/guocedb/compute/transaction"
 
 	"github.com/sirupsen/logrus"
 	"github.com/dolthub/vitess/go/mysql"
@@ -34,6 +35,7 @@ type Handler struct {
 	e               *executor.Engine
 	sm              *SessionManager
 	sessionMgr      *EnhancedSessionManager // New session manager for enhanced functionality
+	txnManager      *transaction.Manager    // Transaction manager
 	c               map[uint32]*mysql.Conn
 	disableMultiStmts bool
 }
@@ -44,6 +46,18 @@ func NewHandler(e *executor.Engine, sm *SessionManager) *Handler {
 		e:          e,
 		sm:         sm,
 		sessionMgr: NewEnhancedSessionManager(),
+		txnManager: transaction.NewManager(nil), // Will be updated when storage is available
+		c:          make(map[uint32]*mysql.Conn),
+	}
+}
+
+// NewHandlerWithTxnManager creates a new Handler with a specific transaction manager.
+func NewHandlerWithTxnManager(e *executor.Engine, sm *SessionManager, txnMgr *transaction.Manager) *Handler {
+	return &Handler{
+		e:          e,
+		sm:         sm,
+		sessionMgr: NewEnhancedSessionManager(),
+		txnManager: txnMgr,
 		c:          make(map[uint32]*mysql.Conn),
 	}
 }
@@ -112,6 +126,16 @@ func (h *Handler) ComQuery(
 	}
 
 	handled, err := h.handleKill(c, query)
+	if err != nil {
+		return err
+	}
+
+	if handled {
+		return nil
+	}
+
+	// Handle transaction statements
+	handled, err = h.handleTransactionStatements(sess, query, callback)
 	if err != nil {
 		return err
 	}
@@ -377,4 +401,96 @@ func (h *Handler) simpleSplitStatements(query string) []string {
 		}
 	}
 	return result
+}
+
+// handleTransactionStatements handles BEGIN, COMMIT, and ROLLBACK statements
+func (h *Handler) handleTransactionStatements(sess *Session, query string, callback mysql.ResultSpoolFn) (bool, error) {
+	if sess == nil {
+		return false, nil
+	}
+
+	// Parse the SQL statement
+	stmt, err := sqlparser.Parse(query)
+	if err != nil {
+		return false, nil // Not a transaction statement, let normal processing handle it
+	}
+
+	switch stmt.(type) {
+	case *sqlparser.Begin:
+		return true, h.handleBegin(sess, callback)
+	case *sqlparser.Commit:
+		return true, h.handleCommit(sess, callback)
+	case *sqlparser.Rollback:
+		return true, h.handleRollback(sess, callback)
+	default:
+		return false, nil // Not a transaction statement
+	}
+}
+
+// handleBegin handles BEGIN statements
+func (h *Handler) handleBegin(sess *Session, callback mysql.ResultSpoolFn) error {
+	if sess.GetTransaction() != nil {
+		return mysql.NewSQLError(1400, "HY000", "Transaction already started")
+	}
+
+	txn, err := h.txnManager.Begin(nil)
+	if err != nil {
+		return h.convertError(err)
+	}
+
+	sess.SetTransaction(txn)
+	
+	result := &sqltypes.Result{}
+	return callback(result, false)
+}
+
+// handleCommit handles COMMIT statements
+func (h *Handler) handleCommit(sess *Session, callback mysql.ResultSpoolFn) error {
+	txn := sess.GetTransaction()
+	if txn == nil {
+		// No active transaction, silently succeed
+		result := &sqltypes.Result{}
+		return callback(result, false)
+	}
+
+	if t, ok := txn.(*transaction.Transaction); ok {
+		err := h.txnManager.Commit(t)
+		sess.SetTransaction(nil)
+		if err != nil {
+			return h.convertError(err)
+		}
+	}
+
+	result := &sqltypes.Result{}
+	return callback(result, false)
+}
+
+// handleRollback handles ROLLBACK statements
+func (h *Handler) handleRollback(sess *Session, callback mysql.ResultSpoolFn) error {
+	txn := sess.GetTransaction()
+	if txn == nil {
+		// No active transaction, silently succeed
+		result := &sqltypes.Result{}
+		return callback(result, false)
+	}
+
+	if t, ok := txn.(*transaction.Transaction); ok {
+		err := h.txnManager.Rollback(t)
+		sess.SetTransaction(nil)
+		if err != nil {
+			return h.convertError(err)
+		}
+	}
+
+	result := &sqltypes.Result{}
+	return callback(result, false)
+}
+
+// convertError converts internal errors to MySQL errors
+func (h *Handler) convertError(err error) error {
+	if err == nil {
+		return nil
+	}
+	// For now, convert all errors to generic MySQL errors
+	return mysql.NewSQLError(1105, "HY000", err.Error())
 }

@@ -7,6 +7,7 @@ require (
 	github.com/dgraph-io/badger/v3 v3.2103.5
 	github.com/dolthub/vitess v2.1.1+incompatible
 	github.com/go-sql-driver/mysql v1.7.2-0.20231213112541-0004702b931d
+	github.com/google/uuid v1.6.0
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.15.2
 	github.com/mitchellh/hashstructure v1.1.0
 	github.com/oliveagle/jsonpath v0.0.0-20180606110733-2e52cf6e6852

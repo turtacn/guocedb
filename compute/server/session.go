@@ -9,21 +9,24 @@ import (
 
 // Session represents a database session with connection state
 type Session struct {
-	id        uint32
-	currentDB string
-	user      string
-	client    string
-	vars      map[string]interface{}
-	mu        sync.RWMutex
+	id          uint32
+	currentDB   string
+	user        string
+	client      string
+	vars        map[string]interface{}
+	transaction sql.Transaction
+	autoCommit  bool
+	mu          sync.RWMutex
 }
 
 // NewSession creates a new session with the given parameters
 func NewSession(id uint32, user, client string) *Session {
 	return &Session{
-		id:     id,
-		user:   user,
-		client: client,
-		vars:   make(map[string]interface{}),
+		id:         id,
+		user:       user,
+		client:     client,
+		vars:       make(map[string]interface{}),
+		autoCommit: true, // Default to autocommit mode
 	}
 }
 
@@ -48,9 +51,15 @@ func (s *Session) GetCurrentDB() string {
 
 // Context creates a new SQL context with session information
 func (s *Session) Context(baseCtx context.Context) *sql.Context {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	
 	ctx := sql.NewContext(baseCtx)
 	if s.currentDB != "" {
 		ctx.SetCurrentDatabase(s.currentDB)
+	}
+	if s.transaction != nil {
+		ctx.SetTransaction(s.transaction)
 	}
 	return ctx
 }
@@ -77,6 +86,34 @@ func (s *Session) User() string {
 // Client returns the client address
 func (s *Session) Client() string {
 	return s.client
+}
+
+// GetTransaction returns the current transaction
+func (s *Session) GetTransaction() sql.Transaction {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.transaction
+}
+
+// SetTransaction sets the current transaction
+func (s *Session) SetTransaction(txn sql.Transaction) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.transaction = txn
+}
+
+// GetAutoCommit returns the autocommit setting
+func (s *Session) GetAutoCommit() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.autoCommit
+}
+
+// SetAutoCommit sets the autocommit setting
+func (s *Session) SetAutoCommit(autoCommit bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.autoCommit = autoCommit
 }
 
 // EnhancedSessionManager manages database sessions with enhanced functionality

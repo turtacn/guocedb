@@ -216,3 +216,14 @@ type Lockable interface {
 	// available.
 	Unlock(ctx *Context, id uint32) error
 }
+
+// Transaction represents a database transaction.
+type Transaction interface {
+	fmt.Stringer
+	// Commit commits the transaction.
+	Commit() error
+	// Rollback rolls back the transaction.
+	Rollback() error
+	// IsReadOnly returns true if the transaction is read-only.
+	IsReadOnly() bool
+}

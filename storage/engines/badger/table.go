@@ -7,6 +7,7 @@ import (
 
 	"github.com/dgraph-io/badger/v3"
 	"github.com/turtacn/guocedb/compute/sql"
+	"github.com/turtacn/guocedb/compute/transaction"
 )
 
 // Interfaces not in core but requested by review/design.
@@ -155,18 +156,39 @@ func (t *Table) Deleter(ctx *sql.Context) RowDeleter {
 }
 
 type rowEditor struct {
-	table *Table
-	txn   *badger.Txn
+	table   *Table
+	txn     *badger.Txn
+	ownsTxn bool // true if we created the transaction, false if using external transaction
+}
+
+// getTransactionFromContext extracts a transaction from the SQL context
+func getTransactionFromContext(ctx *sql.Context) *transaction.Transaction {
+	txn := ctx.GetTransaction()
+	if txn == nil {
+		return nil
+	}
+	if t, ok := txn.(*transaction.Transaction); ok {
+		return t
+	}
+	return nil
 }
 
 // StatementBegin starts a transaction.
 func (re *rowEditor) StatementBegin(ctx *sql.Context) {
-	re.txn = re.table.db.NewTransaction(true)
+	// Check if there's an external transaction in the context
+	if extTxn := getTransactionFromContext(ctx); extTxn != nil {
+		re.txn = extTxn.BadgerTxn()
+		re.ownsTxn = false
+	} else {
+		// Create our own transaction
+		re.txn = re.table.db.NewTransaction(true)
+		re.ownsTxn = true
+	}
 }
 
 // DiscardChanges discards the transaction.
 func (re *rowEditor) DiscardChanges(ctx *sql.Context, err error) error {
-	if re.txn != nil {
+	if re.txn != nil && re.ownsTxn {
 		re.txn.Discard()
 		re.txn = nil
 	}
@@ -175,17 +197,18 @@ func (re *rowEditor) DiscardChanges(ctx *sql.Context, err error) error {
 
 // StatementComplete commits the transaction.
 func (re *rowEditor) StatementComplete(ctx *sql.Context) error {
-	if re.txn != nil {
+	if re.txn != nil && re.ownsTxn {
 		err := re.txn.Commit()
 		re.txn = nil
 		return err
 	}
+	// External transactions are not committed here
 	return nil
 }
 
 // Close closes the editor.
 func (re *rowEditor) Close(ctx *sql.Context) error {
-	if re.txn != nil {
+	if re.txn != nil && re.ownsTxn {
 		re.txn.Discard()
 		re.txn = nil
 	}

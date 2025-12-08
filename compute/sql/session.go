@@ -210,9 +210,11 @@ func NewBaseSession() Session {
 type Context struct {
 	context.Context
 	Session
-	pid    uint64
-	query  string
-	tracer opentracing.Tracer
+	pid         uint64
+	query       string
+	tracer      opentracing.Tracer
+	transaction Transaction
+	currentDB   string
 }
 
 // ContextOption is a function to configure the context.
@@ -254,7 +256,7 @@ func NewContext(
 	ctx context.Context,
 	opts ...ContextOption,
 ) *Context {
-	c := &Context{ctx, NewBaseSession(), 0, "", opentracing.NoopTracer{}}
+	c := &Context{ctx, NewBaseSession(), 0, "", opentracing.NoopTracer{}, nil, ""}
 	for _, opt := range opts {
 		opt(c)
 	}
@@ -284,12 +286,12 @@ func (c *Context) Span(
 	span := c.tracer.StartSpan(opName, opts...)
 	ctx := opentracing.ContextWithSpan(c.Context, span)
 
-	return span, &Context{ctx, c.Session, c.Pid(), c.Query(), c.tracer}
+	return span, &Context{ctx, c.Session, c.Pid(), c.Query(), c.tracer, c.transaction, c.currentDB}
 }
 
 // WithContext returns a new context with the given underlying context.
 func (c *Context) WithContext(ctx context.Context) *Context {
-	return &Context{ctx, c.Session, c.Pid(), c.Query(), c.tracer}
+	return &Context{ctx, c.Session, c.Pid(), c.Query(), c.tracer, c.transaction, c.currentDB}
 }
 
 // Error adds an error as warning to the session.
@@ -308,6 +310,26 @@ func (c *Context) Warn(code int, msg string, args ...interface{}) {
 		Code:    code,
 		Message: fmt.Sprintf(msg, args...),
 	})
+}
+
+// GetTransaction returns the current transaction.
+func (c *Context) GetTransaction() Transaction {
+	return c.transaction
+}
+
+// SetTransaction sets the current transaction.
+func (c *Context) SetTransaction(txn Transaction) {
+	c.transaction = txn
+}
+
+// GetCurrentDatabase returns the current database.
+func (c *Context) GetCurrentDatabase() string {
+	return c.currentDB
+}
+
+// SetCurrentDatabase sets the current database.
+func (c *Context) SetCurrentDatabase(db string) {
+	c.currentDB = db
 }
 
 // NewSpanIter creates a RowIter executed in the given span.
