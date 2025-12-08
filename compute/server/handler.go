@@ -492,5 +492,5 @@ func (h *Handler) convertError(err error) error {
 		return nil
 	}
 	// For now, convert all errors to generic MySQL errors
-	return mysql.NewSQLError(1105, "HY000", err.Error())
+	return mysql.NewSQLError(1105, "HY000", "%s", err.Error())
 }
