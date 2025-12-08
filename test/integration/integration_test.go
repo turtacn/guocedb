@@ -12,7 +12,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/turtacn/guocedb/common/config"
 	"github.com/turtacn/guocedb/network/server"
-	// ... imports for the actual server would go here
+	
+	// Import the new integration test framework
+	integrationFramework "github.com/turtacn/guocedb/integration"
 )
 
 // TestMain sets up and tears down the server for integration tests.
@@ -104,4 +106,35 @@ func TestDDLAndDML(t *testing.T) {
 	err = rows.Scan(&name)
 	require.NoError(t, err)
 	assert.Equal(t, "Bob", name)
+}
+
+// TestIntegrationFramework tests the new integration test framework
+func TestIntegrationFramework(t *testing.T) {
+	// Use the new integration framework
+	ts := integrationFramework.NewTestServer(t)
+	defer ts.Close()
+	
+	client := integrationFramework.NewTestClient(t, ts.DSN(""))
+	defer client.Close()
+
+	// Test basic functionality
+	client.MustExec(
+		"CREATE DATABASE framework_test",
+		"USE framework_test",
+		"CREATE TABLE test (id INT PRIMARY KEY, name VARCHAR(50))",
+		"INSERT INTO test (id, name) VALUES (1, 'framework')",
+	)
+
+	// Verify data
+	var id int
+	var name string
+	err := client.QueryRow("SELECT id, name FROM test WHERE id = 1").Scan(&id, &name)
+	require.NoError(t, err)
+	assert.Equal(t, 1, id)
+	assert.Equal(t, "framework", name)
+
+	// Test helper functions
+	integrationFramework.AssertTableExists(t, client, "test")
+	count := integrationFramework.GetRowCount(t, client, "test")
+	assert.Equal(t, 1, count)
 }
