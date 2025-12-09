@@ -74,11 +74,17 @@ func NewTestServer(t *testing.T, opts ...TestServerOption) *TestServer {
 			Host:            "127.0.0.1",
 			Port:            ts.port,
 			MaxConnections:  100,
+			ConnectTimeout:  10 * time.Second,
+			ReadTimeout:     30 * time.Second,
+			WriteTimeout:    30 * time.Second,
+			IdleTimeout:     8 * time.Hour,
 			ShutdownTimeout: 5 * time.Second,
 		},
 		Storage: config.StorageConfig{
-			DataDir:    ts.dataDir,
-			SyncWrites: false, // Faster for testing
+			DataDir:         ts.dataDir,
+			MaxMemTableSize: 64 << 20, // 64MB - meets minimum 1MB requirement
+			NumCompactors:   2,         // Positive number required
+			SyncWrites:      false,     // Faster for testing
 		},
 		Observability: config.ObservabilityConfig{
 			Enabled: false, // Disable for tests
@@ -86,6 +92,7 @@ func NewTestServer(t *testing.T, opts ...TestServerOption) *TestServer {
 		Logging: config.LoggingConfig{
 			Level:  "error", // Less noise in tests
 			Format: "text",
+			Output: "stdout",
 		},
 	}
 
@@ -132,6 +139,7 @@ func (ts *TestServer) DSN() string {
 		return fmt.Sprintf("root:%s@tcp(127.0.0.1:%d)/",
 			ts.cfg.Security.RootPassword, ts.port)
 	}
+	// Use root with no password (native auth compatible)
 	return fmt.Sprintf("root@tcp(127.0.0.1:%d)/", ts.port)
 }
 

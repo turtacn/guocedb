@@ -96,7 +96,7 @@ func Parse(ctx *sql.Context, query string) (sql.Node, error) {
 		return nil, err
 	}
 
-	return convert(ctx, stmt, s)
+	return convertStatement(ctx, stmt, s)
 }
 
 func parseDescribeTables(s string) (sql.Node, error) {
@@ -123,7 +123,7 @@ func parseDescribeTables(s string) (sql.Node, error) {
 	return nil, ErrUnsupportedSyntax.New(s)
 }
 
-func convert(ctx *sql.Context, stmt sqlparser.Statement, query string) (sql.Node, error) {
+func convertStatement(ctx *sql.Context, stmt sqlparser.Statement, query string) (sql.Node, error) {
 	switch n := stmt.(type) {
 	default:
 		return nil, ErrUnsupportedSyntax.New(n)
@@ -135,6 +135,8 @@ func convert(ctx *sql.Context, stmt sqlparser.Statement, query string) (sql.Node
 		return convertInsert(ctx, n)
 	case *sqlparser.DDL:
 		return convertDDL(n)
+	case *sqlparser.DBDDL:
+		return convertDBDDL(n)
 	case *sqlparser.Set:
 		return convertSet(ctx, n)
 	case *sqlparser.Use:
@@ -142,8 +144,13 @@ func convert(ctx *sql.Context, stmt sqlparser.Statement, query string) (sql.Node
 	case *sqlparser.SetOp: // Replaces Union
 		return convertSetOp(ctx, n)
 	case *sqlparser.ParenSelect:
-		return convert(ctx, n.Select, query)
+		return convertStatement(ctx, n.Select, query)
 	}
+}
+
+// Legacy function for internal use
+func convert(ctx *sql.Context, stmt sqlparser.Statement, query string) (sql.Node, error) {
+	return convertStatement(ctx, stmt, query)
 }
 
 func convertSetOp(ctx *sql.Context, n *sqlparser.SetOp) (sql.Node, error) {
@@ -383,9 +390,29 @@ func convertDDL(c *sqlparser.DDL) (sql.Node, error) {
 	switch c.Action {
 	case sqlparser.CreateStr:
 		return convertCreateTable(c)
+	case sqlparser.DropStr:
+		return convertDropTable(c)
 	default:
 		return nil, ErrUnsupportedSyntax.New(c)
 	}
+}
+
+func convertDBDDL(c *sqlparser.DBDDL) (sql.Node, error) {
+	switch c.Action {
+	case sqlparser.CreateStr:
+		return plan.NewCreateDatabase(c.DBName, c.IfNotExists), nil
+	case sqlparser.DropStr:
+		return plan.NewDropDatabase(c.DBName, c.IfExists), nil
+	default:
+		return nil, ErrUnsupportedSyntax.New(c)
+	}
+}
+
+func convertDropTable(c *sqlparser.DDL) (sql.Node, error) {
+	tableName := c.Table.Name.String()
+	dbName := c.Table.DbQualifier.String()
+	ifExists := c.IfExists
+	return plan.NewDropTable(sql.UnresolvedDatabase(dbName), tableName, ifExists), nil
 }
 
 func convertCreateTable(c *sqlparser.DDL) (sql.Node, error) {

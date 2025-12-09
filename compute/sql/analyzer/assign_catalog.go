@@ -16,6 +16,14 @@ func assignCatalog(ctx *sql.Context, a *Analyzer, n sql.Node) (sql.Node, error) 
 		}
 
 		switch node := n.(type) {
+		case *plan.CreateDatabase:
+			nc := *node
+			nc.SetCatalog(a.Catalog)
+			return &nc, nil
+		case *plan.DropDatabase:
+			nc := *node
+			nc.SetCatalog(a.Catalog)
+			return &nc, nil
 		case *plan.CreateIndex:
 			nc := *node
 			nc.Catalog = a.Catalog

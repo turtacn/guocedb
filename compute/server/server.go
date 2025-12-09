@@ -54,6 +54,12 @@ func NewServer(cfg Config, e *executor.Engine, sb SessionBuilder) (*Server, erro
 		cfg.ConnWriteTimeout = 0
 	}
 
+	// Use native authentication with root user if Auth is not provided
+	// This is more compatible with MySQL clients than AuthNone
+	if cfg.Auth == nil {
+		cfg.Auth = auth.NewNativeSingle("root", "", auth.AllPermissions)
+	}
+
 	handler := NewHandler(e, NewSessionManager(sb, tracer, cfg.Address))
 	a := cfg.Auth.Mysql()
 	l, err := mysql.NewListener(cfg.Protocol, cfg.Address, a, handler, cfg.ConnReadTimeout, cfg.ConnWriteTimeout)

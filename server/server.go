@@ -12,6 +12,7 @@ import (
 
 	commonConfig "github.com/turtacn/guocedb/common/config"
 	"github.com/turtacn/guocedb/compute/analyzer"
+	"github.com/turtacn/guocedb/compute/auth"
 	"github.com/turtacn/guocedb/compute/executor"
 	"github.com/turtacn/guocedb/compute/optimizer"
 	mysql "github.com/turtacn/guocedb/compute/server"
@@ -200,13 +201,17 @@ func (s *Server) DSN() string {
 func (s *Server) initStorage() error {
 	s.logger.Info("Initializing storage", "data_dir", s.cfg.Storage.DataDir)
 
+	// Set default ValueLogFileSize if not configured (1GB, within BadgerDB's 1MB-2GB range)
+	valueLogFileSize := 1 << 30 // 1GB
+	
 	// Convert new config to old common/config format for compatibility
 	legacyCfg := &commonConfig.Config{
 		Storage: commonConfig.StorageConfig{
 			Engine:  "badger",
 			DataDir: s.cfg.Storage.DataDir,
 			Badger: commonConfig.BadgerConfig{
-				SyncWrites: s.cfg.Storage.SyncWrites,
+				ValueLogFileSize: valueLogFileSize,
+				SyncWrites:       s.cfg.Storage.SyncWrites,
 			},
 		},
 	}
@@ -270,11 +275,14 @@ func (s *Server) initMySQLServer() error {
 	addr := fmt.Sprintf("%s:%d", s.cfg.Server.Host, s.cfg.Server.Port)
 	s.logger.Info("Initializing MySQL server", "address", addr)
 
-	// For now, use no authentication (can be extended later)
+	// Use native authentication with root user (no password by default)
+	// This is compatible with MySQL clients and test tools
+	auth := auth.NewNativeSingle("root", "", auth.AllPermissions)
+
 	serverCfg := mysql.Config{
 		Protocol: "tcp",
 		Address:  addr,
-		Auth:     nil, // Will use auth.NewNone() internally
+		Auth:     auth,
 	}
 
 	mysqlSrv, err := mysql.NewDefaultServer(serverCfg, s.engine)
