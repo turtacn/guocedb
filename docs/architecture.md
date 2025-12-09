@@ -65,6 +65,11 @@ GuoceDB 的架构设计遵循分层思想，主要包括接口层、计算层、
 -   **元数据目录 (Catalog)**:
     -   存储数据库的元信息，如数据库、表、列、索引、视图、用户信息等的定义和统计信息。
     -   提供内存实现和持久化实现（基于底层存储引擎）。
+    -   ✅ **Phase 2 完成**: BadgerDB Catalog完全实现`sql.Database`接口和`DatabaseProvider`接口
+        - 支持大小写不敏感的数据库和表查找
+        - 实现线程安全的并发访问
+        - 完整的表生命周期管理（Create/Drop）
+        - 提供`GetTableInsensitive`和`GetTableNames`扩展方法
 -   **分布式调度器 (Scheduler)**: (未来扩展)
     -   在分布式部署模式下，负责任务的分解、调度和结果汇聚。
     -   通过服务网格 (Service Mesh) 实现弹性伸缩和节点通信。
@@ -78,9 +83,15 @@ GuoceDB 的架构设计遵循分层思想，主要包括接口层、计算层、
     -   计算层通过 SAL 与下层存储引擎交互，使得替换或增加存储引擎更为容易。
 -   **插件式存储引擎**:
     -   **Badger 引擎**:
-        -   默认且核心的持久化存储引擎，基于 `hypermodeinc/badger` (或 `dgraph-io/badger` 的一个 fork)。
+        -   默认且核心的持久化存储引擎，基于 `dgraph-io/badger/v3`。
         -   提供高性能的键值存储，GuoceDB 在其上构建行式存储、索引等关系数据库特性。
-        -   需要设计合适的键值编码方案来存储表数据、索引数据和元数据。
+        -   ✅ 已实现键值编码方案用于存储表数据、索引数据和元数据。
+        -   ✅ **Phase 2 完成**: 完整实现Table接口
+            - 实现`sql.Table`核心接口（Name, Schema, Partitions, PartitionRows）
+            - 实现`sql.Inserter`接口用于数据插入
+            - 提供`InsertableTable`, `UpdatableTable`, `DeletableTable`扩展接口
+            - 支持自管理事务和外部事务两种模式
+            - 完整的CRUD操作支持
     -   **MDD/MDI/KVD**:
         -   占位符，代表未来可能支持的其他特定用途存储引擎，例如内存密集型数据 (Memory-Driven Data)、索引专用 (Memory-Driven Index)、或通用键值数据 (Key-Value Data) 存储。
 

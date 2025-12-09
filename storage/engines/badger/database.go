@@ -202,6 +202,18 @@ func (d *Database) GetTableInsensitive(ctx *sql.Context, name string) (sql.Table
 	return nil, false, nil
 }
 
+// GetTableNames returns the names of all tables in the database.
+func (d *Database) GetTableNames(ctx *sql.Context) ([]string, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	names := make([]string, 0, len(d.tables))
+	for name := range d.tables {
+		names = append(names, name)
+	}
+	return names, nil
+}
+
 // DropTable drops a table.
 func (d *Database) DropTable(ctx *sql.Context, name string) error {
 	d.mu.Lock()
