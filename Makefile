@@ -4,39 +4,38 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev
 GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_TIME ?= $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
 
-LDFLAGS := -X 'github.com/turtacn/guocedb/cli/commands.Version=$(VERSION)' \
-           -X 'github.com/turtacn/guocedb/cli/commands.GitCommit=$(GIT_COMMIT)' \
-           -X 'github.com/turtacn/guocedb/cli/commands.BuildTime=$(BUILD_TIME)'
+LDFLAGS := -X 'main.Version=$(VERSION)' \
+           -X 'main.GitCommit=$(GIT_COMMIT)' \
+           -X 'main.BuildTime=$(BUILD_TIME)'
 
-.PHONY: all build build-cli build-server test clean install lint fmt run docker help
+.PHONY: all build test clean install lint fmt run docker help
 
 all: build
 
 ## Build targets
-build: build-cli build-server  ## Build both CLI and server binaries
+build:  ## Build the GuoceDB binary
+	@echo "Building GuoceDB $(VERSION)..."
+	@mkdir -p bin
+	go build -ldflags "$(LDFLAGS)" -o bin/guocedb ./cmd/guocedb
 
-build-cli:  ## Build the CLI binary
-	@echo "Building GuoceDB CLI..."
-	go build -ldflags "$(LDFLAGS)" -o bin/guocedb ./cli
+build-cli: build  ## Alias for build (backward compatibility)
 
-build-server:  ## Build the server binary
-	@echo "Building GuoceDB Server..."
-	go build -ldflags "$(LDFLAGS)" -o bin/guocedb-server ./cmd/guocedb-server
+build-server: build  ## Alias for build (backward compatibility)
 
 build-static:  ## Build static binaries (no CGO)
 	@echo "Building static binaries..."
-	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS) -s -w" -o bin/guocedb ./cli
-	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS) -s -w" -o bin/guocedb-server ./cmd/guocedb-server
+	@mkdir -p bin
+	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS) -s -w" -o bin/guocedb ./cmd/guocedb
 
 ## Test targets
 test:  ## Run all tests
-	go test -race -cover ./...
+	go test -v -race -cover ./...
 
-test-cli:  ## Run CLI tests only
-	go test -race -cover ./cli/... ./internal/...
+test-config:  ## Run config tests only
+	go test -v -race -cover ./config/...
 
-test-integration:  ## Run integration tests
-	go test -race -v ./integration/...
+test-server:  ## Run server tests only
+	go test -v -race -cover ./server/...
 
 test-short:  ## Run short tests only
 	go test -short ./...
@@ -50,21 +49,25 @@ coverage:  ## Generate test coverage report
 clean:  ## Clean build artifacts
 	rm -rf bin/ coverage.out coverage.html
 
-install: build-cli  ## Install CLI binary to GOPATH/bin
-	cp bin/guocedb $(shell go env GOPATH)/bin/
+install: build  ## Install binary to GOPATH/bin
+	@echo "Installing guocedb..."
+	go install -ldflags "$(LDFLAGS)" ./cmd/guocedb
 
-lint:  ## Run linter
-	golangci-lint run ./...
+lint:  ## Run linter (if golangci-lint is installed)
+	@which golangci-lint > /dev/null && golangci-lint run ./... || echo "golangci-lint not installed, skipping..."
 
 fmt:  ## Format code
 	go fmt ./...
 
+vet:  ## Run go vet
+	go vet ./...
+
 ## Run targets
 run:  ## Run server with default config
-	go run ./cli serve --port 3306 --data-dir ./data
+	go run ./cmd/guocedb --port 3306 --data-dir ./data
 
-run-cli:  ## Run CLI with example command
-	go run ./cli version
+run-check:  ## Run config check
+	go run ./cmd/guocedb check
 
 ## Docker targets
 docker:  ## Build Docker image
@@ -87,16 +90,16 @@ vendor:  ## Vendor dependencies
 
 ## Release targets
 release-linux:  ## Build Linux release binaries
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS) -s -w" -o bin/guocedb-linux-amd64 ./cli
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS) -s -w" -o bin/guocedb-server-linux-amd64 ./cmd/guocedb-server
+	@mkdir -p bin
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS) -s -w" -o bin/guocedb-linux-amd64 ./cmd/guocedb
 
 release-darwin:  ## Build macOS release binaries
-	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS) -s -w" -o bin/guocedb-darwin-amd64 ./cli
-	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS) -s -w" -o bin/guocedb-server-darwin-amd64 ./cmd/guocedb-server
+	@mkdir -p bin
+	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS) -s -w" -o bin/guocedb-darwin-amd64 ./cmd/guocedb
 
 release-windows:  ## Build Windows release binaries
-	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS) -s -w" -o bin/guocedb-windows-amd64.exe ./cli
-	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS) -s -w" -o bin/guocedb-server-windows-amd64.exe ./cmd/guocedb-server
+	@mkdir -p bin
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS) -s -w" -o bin/guocedb-windows-amd64.exe ./cmd/guocedb
 
 release-all: release-linux release-darwin release-windows  ## Build all release binaries
 

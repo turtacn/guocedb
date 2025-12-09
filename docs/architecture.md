@@ -225,7 +225,90 @@ GuoceDB 初期设计为单机集中式数据库。其典型部署如下图所示
 -   **增强的安全性**: 支持更细粒度的权限控制、行级/列级安全、数据脱敏等。
 -   **云原生特性**: 更好的容器化支持、与Kubernetes等编排系统集成。
 
-## 8. 参考
+## 8. 配置管理与服务启动 (Phase 7)
+
+GuoceDB 采用灵活的多层配置系统，支持配置文件、环境变量和命令行参数三种配置源。
+
+### 8.1. 配置系统 (`config/`)
+
+配置系统由以下组件组成：
+
+- **config.go**: 定义完整的配置结构体层级，包括 Server、Storage、Security、Observability、Logging 等配置节
+- **defaults.go**: 提供合理的默认配置值，确保开箱即用
+- **loader.go**: 使用 viper 实现配置加载，支持 YAML 文件、环境变量 (GUOCEDB_ 前缀)、命令行参数
+- **validator.go**: 提供全面的配置验证逻辑，在启动前捕获配置错误
+
+配置优先级（由高到低）：命令行参数 > 环境变量 > 配置文件 > 默认值
+
+详细配置说明参见: `docs/round2-phase7/configuration.md`
+
+### 8.2. 服务器生命周期管理 (`server/`)
+
+服务器包提供统一的生命周期管理：
+
+- **server.go**: 核心 Server 结构体，整合所有组件（存储、计算、网络、可观测性）
+- **lifecycle.go**: 提供生命周期钩子机制（PreStart、PostStart、PreStop、PostStop）
+- **options.go**: 函数式选项模式，支持灵活的服务器配置
+
+服务器状态转换：New → Starting → Running → Stopping → Stopped
+
+支持优雅关闭：
+1. 停止接受新连接
+2. 等待活跃连接完成（带超时）
+3. 关闭可观测性服务
+4. 关闭事务管理器
+5. 关闭存储引擎
+
+### 8.3. 命令行接口 (`cmd/guocedb/`)
+
+统一的命令行入口，基于 cobra 框架：
+
+主要命令：
+- `guocedb`: 启动数据库服务器（默认命令）
+- `guocedb version`: 显示版本信息
+- `guocedb check`: 验证配置文件有效性
+- `guocedb help`: 显示帮助信息
+
+支持的主要参数：
+- `--config, -c`: 配置文件路径
+- `--port, -p`: 监听端口（默认 3306）
+- `--host`: 监听地址（默认 0.0.0.0）
+- `--data-dir, -d`: 数据目录
+- `--log-level`: 日志级别
+- `--auth`: 启用认证
+- `--metrics`: 启用指标（默认启用）
+
+### 8.4. 信号处理
+
+服务器支持优雅的信号处理：
+
+- **SIGTERM/SIGINT**: 触发优雅关闭流程
+  - 等待活跃连接完成（最长等待 shutdown_timeout）
+  - 安全关闭所有组件
+  - 确保数据完整性
+
+### 8.5. 示例配置文件
+
+示例配置位于 `configs/guocedb.yaml`，包含所有可配置项的说明。
+
+```yaml
+server:
+  host: "0.0.0.0"
+  port: 3306
+  max_connections: 1000
+storage:
+  data_dir: "./data"
+security:
+  enabled: false
+observability:
+  enabled: true
+  address: ":9090"
+logging:
+  level: "info"
+  format: "json"
+```
+
+## 9. 参考
 
 - [1] go-mysql-server: [https://github.com/dolthub/go-mysql-server](https://github.com/dolthub/go-mysql-server)
 - [2] badger: [https://github.com/hypermodeinc/badger](https://github.com/hypermodeinc/badger) (或其主流fork如 [https://github.com/dgraph-io/badger](https://github.com/dgraph-io/badger))
