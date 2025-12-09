@@ -31,6 +31,15 @@ build-static:  ## Build static binaries (no CGO)
 test:  ## Run all tests
 	go test -v -race -cover ./...
 
+test-unit:  ## Run unit tests only
+	go test -v -short ./...
+
+test-integration:  ## Run integration tests
+	go test -v ./integration/... -count=1
+
+test-e2e:  ## Run E2E tests
+	./scripts/run-e2e.sh
+
 test-config:  ## Run config tests only
 	go test -v -race -cover ./config/...
 
@@ -40,10 +49,18 @@ test-server:  ## Run server tests only
 test-short:  ## Run short tests only
 	go test -short ./...
 
-coverage:  ## Generate test coverage report
+test-cover:  ## Generate test coverage report
 	go test -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated: coverage.html"
+
+coverage: test-cover  ## Alias for test-cover
+
+bench:  ## Run benchmarks
+	go test -bench=. -benchmem ./benchmark/...
+
+bench-full:  ## Run full benchmark suite
+	./scripts/benchmark.sh
 
 ## Development targets
 clean:  ## Clean build artifacts

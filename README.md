@@ -9,7 +9,7 @@
 
 **guocedb** is a high-performance, MySQL-compatible relational database built from the ground up in pure Go. It features a storage-agnostic query engine with pluggable storage backends, designed for modern cloud-native applications.
 
-[中文文档](README-zh.md) | [Architecture](docs/architecture.md) | [Contributing](CONTRIBUTING.md)
+[中文文档](README-zh.md) | [Architecture](docs/architecture.md) | [SQL Reference](docs/sql-reference.md) | [Deployment](docs/deployment.md) | [Contributing](CONTRIBUTING.md)
 
 ## Mission Statement
 
@@ -345,6 +345,74 @@ All configuration options can be overridden using command line flags:
 --include-logs      Include recent logs
 --addr              Server address
 ```
+
+## Development & Testing
+
+### Running Tests
+
+```bash
+# Run all tests
+make test
+
+# Run unit tests only
+make test-unit
+
+# Run integration tests
+make test-integration
+
+# Run E2E tests
+go test ./integration/e2e_*.go -v
+
+# Run with coverage
+make test-cover
+
+# Run with race detector
+go test -race ./...
+```
+
+### Running Benchmarks
+
+```bash
+# Run all benchmarks
+make bench
+
+# Run query benchmarks
+go test -bench=. ./benchmark/query_bench_test.go
+
+# Run transaction benchmarks
+go test -bench=. ./benchmark/txn_bench_test.go
+
+# Run specific benchmark
+go test -bench=BenchmarkSelect_PointQuery ./benchmark/...
+```
+
+### E2E Testing
+
+End-to-end tests validate the complete system:
+
+```bash
+# Run full E2E test suite
+./scripts/run-e2e.sh
+
+# Run specific E2E test category
+go test -v ./integration/e2e_ddl_test.go       # DDL operations
+go test -v ./integration/e2e_dml_test.go       # DML operations
+go test -v ./integration/e2e_transaction_test.go  # Transactions
+go test -v ./integration/e2e_concurrent_test.go   # Concurrency
+go test -v ./integration/e2e_recovery_test.go     # Recovery
+```
+
+### Test Coverage
+
+The project maintains comprehensive test coverage:
+
+- **Unit Tests**: Core logic and algorithms
+- **Integration Tests**: Component interactions
+- **E2E Tests**: Full system workflows
+- **Benchmark Tests**: Performance validation
+- **Security Tests**: Authentication and authorization
+
+See [Testing Guide](docs/testing-guide.md) for detailed testing practices.
 
 ## Performance Benchmarks
 
