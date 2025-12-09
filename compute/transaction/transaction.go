@@ -57,10 +57,17 @@ func (t *Transaction) Commit() error {
 		return ErrTransactionClosed
 	}
 	err := t.badgerTxn.Commit()
-	if err == nil {
-		t.committed = true
+	if err != nil {
+		// Check for BadgerDB conflict errors
+		if err == badger.ErrConflict {
+			t.rolledBack = true
+			return ErrTransactionConflict
+		}
+		t.rolledBack = true
+		return err
 	}
-	return err
+	t.committed = true
+	return nil
 }
 
 // Rollback rolls back the transaction
@@ -93,6 +100,11 @@ func (t *Transaction) IsolationLevel() IsolationLevel {
 	return t.isolationLevel
 }
 
+// IsClosed returns true if the transaction has been committed or rolled back
+func (t *Transaction) IsClosed() bool {
+	return t.committed || t.rolledBack
+}
+
 // Get retrieves a value for a given key within the transaction
 func (t *Transaction) Get(key []byte) ([]byte, error) {
 	if t.committed || t.rolledBack {
@@ -100,6 +112,9 @@ func (t *Transaction) Get(key []byte) ([]byte, error) {
 	}
 	item, err := t.badgerTxn.Get(key)
 	if err != nil {
+		if err == badger.ErrKeyNotFound {
+			return nil, ErrKeyNotFound
+		}
 		return nil, err
 	}
 	return item.ValueCopy(nil)

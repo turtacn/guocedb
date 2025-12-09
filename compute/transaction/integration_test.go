@@ -262,7 +262,7 @@ func TestTxn_IsolationBetweenTransactions(t *testing.T) {
 	
 	// Transaction 2 should not see uncommitted data from transaction 1
 	_, err = txn2.Get([]byte("key1"))
-	assert.Equal(t, badger.ErrKeyNotFound, err)
+	assert.Equal(t, ErrKeyNotFound, err)
 	
 	// Commit transaction 1
 	err = txnManager.Commit(txn1)
