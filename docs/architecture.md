@@ -125,13 +125,38 @@ GuoceDB 的架构设计遵循分层思想，主要包括接口层、计算层、
 安全层负责保障数据库的访问安全和数据安全。
 
 -   **身份认证 (Authentication - AuthN)**:
+    -   ✅ **Phase 5 已完成**: 实现完整的用户认证系统 (`security/auth/*`)
     -   验证尝试连接到数据库的用户的身份，支持用户名密码等认证方式，与 MySQL 协议的认证机制集成。
+    -   **密码安全**: 使用 bcrypt (cost=12) 哈希存储密码，支持 MySQL native password 兼容。
+    -   **账户保护**: 失败尝试跟踪（默认5次）、自动锁定（默认15分钟）、密码过期支持。
+    -   详见 `docs/round2-phase5/security-design.md`。
+    
 -   **访问控制 (Authorization - AuthZ)**:
+    -   ✅ **Phase 5 已完成**: 实现基于角色的访问控制(RBAC)系统 (`security/authz/*`)
     -   在身份认证成功后，根据用户角色和权限，控制其对数据库对象（库、表、列等）的访问和操作权限（SELECT, INSERT, UPDATE, DELETE 等）。
--   **数据加解密 (Crypto)**:
-    -   支持静态数据加密 (Encryption at Rest) 和传输中数据加密 (Encryption in Transit - SSL/TLS)。
+    -   **权限模型**: 位标志(bitflag)权限系统，支持 SELECT/INSERT/UPDATE/DELETE/CREATE/DROP/ALTER/INDEX/GRANT/ADMIN。
+    -   **角色系统**: 预定义角色（admin, readwrite, readonly, ddladmin）和自定义角色。
+    -   **层次化权限**: 全局权限 → 数据库级权限 → 表级权限。
+    -   详见 `docs/round2-phase5/security-design.md`。
+    
 -   **审计日志 (Audit)**:
+    -   ✅ **Phase 5 已完成**: 实现全面的审计日志系统 (`security/audit/*`)
     -   记录敏感操作和安全相关事件，用于事后追踪和审计。
+    -   **事件类型**: AUTHENTICATION, AUTHORIZATION, QUERY, DDL, DML, ADMIN, CONNECTION。
+    -   **日志格式**: JSON结构化格式，支持同步/异步写入。
+    -   **过滤功能**: IP过滤、事件类型过滤、语句截断（最大1000字符）。
+    -   详见 `docs/round2-phase5/security-design.md`。
+
+-   **统一安全管理器 (SecurityManager)**:
+    -   ✅ **Phase 5 已完成**: 实现统一的安全层门面 (`security/security.go`)
+    -   整合认证、授权、审计三层为统一接口。
+    -   提供用户管理、角色管理、权限检查、审计记录的统一API。
+    -   支持配置化启用/禁用安全功能。
+
+-   **数据加解密 (Crypto)**:
+    -   ⚠️ **部分实现**: 密码哈希已完成 (`security/crypto/*`)
+    -   支持静态数据加密 (Encryption at Rest) 和传输中数据加密 (Encryption in Transit - SSL/TLS) - 待实现。
+    
 -   **防篡改、漏洞管理**: (未来规划)
     -   更高级的安全特性，如数据完整性校验、漏洞扫描集成等。
 
