@@ -26,11 +26,6 @@ func (b *BeginTransaction) Children() []sql.Node {
 
 // RowIter implements the Node interface
 func (b *BeginTransaction) RowIter(ctx *sql.Context) (sql.RowIter, error) {
-	// Check if transaction is already active
-	if ctx.GetTransaction() != nil {
-		return nil, sql.ErrTransactionAlreadyStarted
-	}
-	
 	// Note: Actual transaction creation is handled by the handler layer
 	// This plan node is mainly for query parsing and validation
 	return sql.RowsToRowIter(), nil
