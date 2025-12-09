@@ -153,7 +153,7 @@ func (h *Handler) ComQuery(
 	}()
 
 	if err != nil {
-		return err
+		return ConvertToMySQLError(err)
 	}
 
 	var r *sqltypes.Result
@@ -165,7 +165,7 @@ func (h *Handler) ComQuery(
 
 		if r.RowsAffected == rowsBatch {
 			if err := callback(r, true); err != nil {
-				return err
+				return ConvertToMySQLError(err)
 			}
 
 			r = nil
@@ -180,7 +180,7 @@ func (h *Handler) ComQuery(
 				break
 			}
 
-			return err
+			return ConvertToMySQLError(err)
 		}
 
 		r.Rows = append(r.Rows, rowToSQL(schema, row))
@@ -188,7 +188,7 @@ func (h *Handler) ComQuery(
 	}
 
 	if err := rows.Close(); err != nil {
-		return err
+		return ConvertToMySQLError(err)
 	}
 
 	// Even if r.RowsAffected = 0, the callback must be
@@ -488,9 +488,5 @@ func (h *Handler) handleRollback(sess *Session, callback mysql.ResultSpoolFn) er
 
 // convertError converts internal errors to MySQL errors
 func (h *Handler) convertError(err error) error {
-	if err == nil {
-		return nil
-	}
-	// For now, convert all errors to generic MySQL errors
-	return mysql.NewSQLError(1105, "HY000", "%s", err.Error())
+	return ConvertToMySQLError(err)
 }

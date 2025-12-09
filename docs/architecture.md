@@ -34,6 +34,7 @@ GuoceDB 的架构设计遵循分层思想，主要包括接口层、计算层、
     -   实现标准的 MySQL 网络协议，确保与现有 MySQL 客户端和工具（如 Navicat, DBeaver, MySQL CLI）的兼容性。
     -   处理连接管理、认证（与安全层协作）、查询接收和结果集返回。
     -   将基于 `go-mysql-server` 的协议处理逻辑封装在此。
+    -   **MySQL Protocol Handler**: ✅ 已完成 Phase 3 增强 - 完整的错误码映射、结果集构建、多语句支持 (详见 `docs/round2-phase3/mysql-protocol.md`)。
 -   **数据生命周期管理 API**:
     -   提供 gRPC 接口（未来可扩展 RESTful 接口）用于数据库管理操作，如创建/删除数据库/表、备份恢复、用户权限管理、系统配置调整等。
     -   定义在 `api/protobuf/mgmt/v1/management.proto`。
