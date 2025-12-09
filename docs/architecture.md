@@ -111,12 +111,27 @@ GuoceDB 的架构设计遵循分层思想，主要包括接口层、计算层、
 维护层提供数据库运行状态的监控、诊断和日志记录等功能，保障系统的稳定运行和问题排查。
 
 -   **指标收集 (Metrics)**:
-    -   收集关键性能指标 (KPIs)，如 QPS、TPS、延迟、缓存命中率、资源利用率等。
-    -   可集成 Prometheus 等监控系统。
+    -   ✅ **Phase 6 已完成**: 实现完整的 Prometheus 指标暴露系统 (`observability/metrics/*`)
+    -   收集关键性能指标: 连接数、查询QPS/延迟、事务统计、存储使用、错误率等
+    -   自定义 Collector 支持 BadgerDB 存储统计 (LSM大小、键数量、SST表数量)
+    -   通过 `/metrics` 端点暴露 Prometheus 格式指标
+    -   详见 `docs/round2-phase6/metrics-reference.md` 完整指标文档
+-   **健康检查 (Health Checks)**:
+    -   ✅ **Phase 6 已完成**: 实现 Kubernetes 兼容的健康检查端点 (`observability/health/*`)
+    -   `/health` - 详细健康状态检查（存储、目录、事务管理器等）
+    -   `/ready` - Kubernetes Readiness Probe
+    -   `/live` - Kubernetes Liveness Probe
+    -   支持自定义健康检查函数注册、并发执行、超时控制
+-   **诊断工具 (Diagnostics)**:
+    -   ✅ **Phase 6 已完成**: 实现运行时诊断和性能分析工具 (`observability/diagnostic/*`)
+    -   `/debug/diagnostic` - 完整诊断快照（运行时、连接、查询、事务、存储）
+    -   `/debug/memory` - 内存统计详情
+    -   `/debug/queries` - 活跃查询列表
+    -   `/debug/connections` - 连接详情
+    -   `/debug/pprof/*` - Go 性能分析端点（CPU、堆、goroutine等）
+    -   慢查询自动记录（可配置阈值、环形缓冲区）
 -   **日志记录 (Logging)**:
     -   提供统一的日志框架，记录系统运行日志、错误日志、慢查询日志等。
--   **诊断工具 (Diagnostics)**:
-    -   提供工具和接口用于问题诊断，如 Profiling、追踪等。
 -   **状态报告 (Status)**:
     -   提供查询数据库当前状态、配置、会话信息等的接口。
 
