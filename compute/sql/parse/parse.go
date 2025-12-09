@@ -141,6 +141,8 @@ func convert(ctx *sql.Context, stmt sqlparser.Statement, query string) (sql.Node
 		return convertUse(n)
 	case *sqlparser.SetOp: // Replaces Union
 		return convertSetOp(ctx, n)
+	case *sqlparser.ParenSelect:
+		return convert(ctx, n.Select, query)
 	}
 }
 
